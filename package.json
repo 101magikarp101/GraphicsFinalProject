@@ -4,11 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "bun run ./public/index.html",
-    "build:static": "bun build --production --outdir=dist ./public/index.html"
+    "build:static": "bun build --production --outdir=dist ./public/index.html",
+    "deploy": "bun run build:static && wrangler deploy"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/underscore": "^1.13.0"
+    "@types/underscore": "^1.13.0",
+    "wrangler": "^4.81.0"
   },
   "peerDependencies": {
     "typescript": "^5"

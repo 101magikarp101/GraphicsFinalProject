@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "minceraft",
+  "account_id": "e796710ae39472ea7af7607a6d9156e3",
+  "compatibility_date": "2026-04-09",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "dist"
+  },
+  "preview_urls": true,
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "build": {
+    "command": "bun run build:static",
+    "watch_dir": "./src"
+  }
+}
