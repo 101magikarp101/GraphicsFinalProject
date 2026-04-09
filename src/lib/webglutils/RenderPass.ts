@@ -28,9 +28,14 @@ export class RenderPass {
   private textureLoaded: boolean;
   public texture: WebGLTexture;
 
+  private extInstanced: ANGLE_instanced_arrays | null;
+  private instancedAttributes: Set<string>;
+
   constructor(extVAO: OES_vertex_array_object, context: WebGLRenderingContext, vShader: string, fShader: string) {
     this.extVAO = extVAO;
     this.ctx = context;
+    this.extInstanced = context.getExtension("ANGLE_instanced_arrays");
+    this.instancedAttributes = new Set();
     this.vShader = vShader.slice();
     this.fShader = fShader.slice();
     this.shaderProgram = 0;
@@ -89,6 +94,9 @@ export class RenderPass {
           attr.offset
         )
         gl.enableVertexAttribArray(attrLoc);
+        if (this.instancedAttributes.has(attr.name) && this.extInstanced) {
+          this.extInstanced.vertexAttribDivisorANGLE(attrLoc, 1);
+        }
       } else {
         console.error("Attribute's buffer name not found", this);
       }
@@ -145,6 +153,47 @@ export class RenderPass {
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
     }
     gl.drawElements(this.drawMode, this.drawCount, this.drawType, this.drawOffset);
+
+    gl.useProgram(null);
+    this.extVAO.bindVertexArrayOES(null);
+  }
+
+  public addInstancedAttribute(attribName: string, size: number, type: GLenum, normalized: boolean,
+                                stride: number, offset: number, bufferName?: string, bufferData?: BufferData) {
+    this.instancedAttributes.add(attribName);
+    this.addAttribute(attribName, size, type, normalized, stride, offset, bufferName, bufferData);
+  }
+
+  public updateAttributeBuffer(attribName: string, data: BufferData) {
+    const gl = this.ctx;
+    gl.useProgram(this.shaderProgram);
+    this.extVAO.bindVertexArrayOES(this.VAO);
+    const buf = this.attributeBuffers.get(attribName);
+    if (buf) {
+      buf.data = data;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf.bufferId);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+    } else {
+      console.error("Attribute buffer not found:", attribName);
+    }
+    gl.useProgram(null);
+    this.extVAO.bindVertexArrayOES(null);
+  }
+
+  public drawInstanced(instanceCount: number) {
+    const gl = this.ctx;
+    gl.useProgram(this.shaderProgram);
+    this.extVAO.bindVertexArrayOES(this.VAO);
+
+    this.uniforms.forEach(uniform => {
+      uniform.bindFunction(gl, uniform.location);
+    });
+    if (this.textureMapped) {
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    }
+    if (this.extInstanced) {
+      this.extInstanced.drawElementsInstancedANGLE(this.drawMode, this.drawCount, this.drawType, this.drawOffset, instanceCount);
+    }
 
     gl.useProgram(null);
     this.extVAO.bindVertexArrayOES(null);

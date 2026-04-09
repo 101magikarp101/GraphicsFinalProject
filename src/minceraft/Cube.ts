@@ -1,8 +1,6 @@
-import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
+import { Vec3, Vec4 } from "gl-matrix";
 
 export class Cube {
-  public center: Vec3;
-  public scalar: GLfloat;
 
   private positionsRay: Vec4[];
   private indicesRay: Vec3[];
@@ -52,7 +50,7 @@ export class Cube {
     console.assert(this.positionsRay.length === 4 * 6);
     this.positionsF32 = new Float32Array(this.positionsRay.length * 4);
     this.positionsRay.forEach((v: Vec4, i: number) => {
-      this.positionsF32.set(v.xyzw, i * 4);
+      this.positionsF32.set(v, i * 4);
     });
     console.assert(this.positionsF32 != null);
     console.assert(this.positionsF32.length === 4 * 6 * 4);
@@ -81,7 +79,7 @@ export class Cube {
     console.assert(this.indicesRay.length === 12);
     this.indicesU32 = new Uint32Array(this.indicesRay.length * 3);
     this.indicesRay.forEach((v: Vec3, i: number) => {
-      this.indicesU32.set(v.xyz, i * 3);
+      this.indicesU32.set(v, i * 3);
     });
     console.assert(this.indicesU32 != null);
     console.assert(this.indicesU32.length === 12 * 3);
@@ -122,7 +120,7 @@ export class Cube {
     console.assert(this.normalsRay.length === 4 * 6);
     this.normalsF32 = new Float32Array(this.normalsRay.length * 4);
     this.normalsRay.forEach((v: Vec4, i: number) => {
-      this.normalsF32.set(v.xyzw, i * 4);
+      this.normalsF32.set(v, i * 4);
     });
     console.assert(this.normalsF32 != null);
     console.assert(this.normalsF32.length === 4 * 6 * 4);
@@ -163,7 +161,7 @@ export class Cube {
     console.assert(this.uvRay.length === 4 * 6);
     this.uvF32 = new Float32Array(this.uvRay.length * 2);
     this.uvRay.forEach((v: Vec3, i: number) => {
-      this.uvF32.set(v.xy, i * 2);
+      this.uvF32.set([v.x, v.y], i * 2);
     });
     console.assert(this.uvF32 != null);
     console.assert(this.uvF32.length === 4 * 6 * 2);

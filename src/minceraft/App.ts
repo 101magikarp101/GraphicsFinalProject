@@ -1,7 +1,5 @@
-import { Debugger } from "../lib/webglutils/Debugging.js";
 import {
   CanvasAnimation,
-  WebGLUtilities
 } from "../lib/webglutils/CanvasAnimation.js";
 import { GUI } from "./Gui.js";
 import {
@@ -9,9 +7,8 @@ import {
   blankCubeFSText,
   blankCubeVSText
 } from "./Shaders.js";
-import { Mat4, Vec4, Vec3 } from "../lib/TSM.js";
+import { Vec4, Vec3 } from "gl-matrix";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
-import { Camera } from "../lib/webglutils/Camera.js";
 import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
 
@@ -39,8 +36,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     super(canvas);
 
     this.canvas2d = document.getElementById("textCanvas") as HTMLCanvasElement;
-  
-    this.ctx = Debugger.makeDebugContext(this.ctx);
+
     let gl = this.ctx;
         
     this.gui = new GUI(this.canvas2d, this);
@@ -49,7 +45,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Generate initial landscape
     this.chunk = new Chunk(0.0, 0.0, 64);
     
-    this.blankCubeRenderPass = new RenderPass(gl, blankCubeVSText, blankCubeFSText);
+    this.blankCubeRenderPass = new RenderPass(this.extVAO, gl, blankCubeVSText, blankCubeFSText);
     this.cubeGeometry = new Cube();
     this.initBlankCube();
     
@@ -115,15 +111,15 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.blankCubeRenderPass.addUniform("uLightPos",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-        gl.uniform4fv(loc, this.lightPosition.xyzw);
+        gl.uniform4fv(loc, this.lightPosition);
     });
     this.blankCubeRenderPass.addUniform("uProj",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-        gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.projMatrix().all()));
+        gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.projMatrix()));
     });
     this.blankCubeRenderPass.addUniform("uView",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-        gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.viewMatrix().all()));
+        gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.viewMatrix()));
     });
     
     this.blankCubeRenderPass.setDrawData(this.ctx.TRIANGLES, this.cubeGeometry.indicesFlat().length, this.ctx.UNSIGNED_INT, 0);

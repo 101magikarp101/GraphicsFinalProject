@@ -1,9 +1,8 @@
-import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
-import Rand from "../lib/rand-seed/Rand.js"
+import Rand from "rand-seed";
 
 export class Chunk {
     private cubes: number; // Number of cubes that should be *drawn* each frame
-    private cubePositionsF32: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
+    private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
     private x : number; // Center of the chunk
     private y : number;
     private size: number; // Number of cubes along each side of the chunk

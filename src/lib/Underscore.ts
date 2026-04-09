@@ -1,3 +1,3 @@
-import _ from "./underscore/underscore.js";
+import _ from "underscore";
 export default _;
-export * from "./underscore/underscore.js";
+export * from "underscore";

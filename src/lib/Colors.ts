@@ -1,5 +1,4 @@
-import { Vec4 } from "./TSM.js";
-// export interface Color { r : number, g : number, b : number, a : number; }
+import { Vec4 } from "gl-matrix";
 export type Color = Vec4;
 
 export interface ColorCollection {

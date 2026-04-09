@@ -97,7 +97,7 @@ let deepEq = function(a: any, b: any, aStack: any[], bStack: any[]) {
     if (Object.keys(b).length !== length) return false;
     while (length--) {
       // Deep compare each member
-      key = keys[length];
+      key = keys[length]!;
       if (!(key in b && eq(a[key], b[key], aStack, bStack))) return false;
     }
   }
@@ -221,9 +221,9 @@ class TestSuite <T>{
       if(this.deps ===  null) {return { status: "Failed", reason: "No dependancies registered" }}
       t(this.deps); // ran without error
       return { status: "Passed" };
-    } catch (result) {
+    } catch (result: any) {
       if (result.status) {
-        return result;
+        return result as TestResult;
       } else if (result instanceof Error) {
         return { status: "Failed", reason: result.message };
       }
