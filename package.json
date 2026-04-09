@@ -1,0 +1,23 @@
+{
+  "name": "minceraft",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run ./public/index.html",
+    "build:static": "bun build --production --outdir=dist ./public/index.html"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/underscore": "^1.13.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "gl-matrix": "^4.0.0-beta.2",
+    "three": "^0.183.2",
+    "underscore": "^1.13.8",
+    "vue": "2"
+  },
+  "packageManager": "bun@1.3.10"
+}
