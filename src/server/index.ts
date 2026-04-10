@@ -1,17 +1,15 @@
 import { Entrypoint, handler } from "@cloudflare/actors";
 import { newWorkersRpcResponse } from "capnweb";
-import { GameApiServer } from "./api.js";
+import { GameRoom, GameServer } from "../game/room.js";
 
-export { GameState } from "./game-state.js";
+export { GameRoom };
 
 export class Worker extends Entrypoint<Env> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-
     if (url.pathname === "/api") {
-      return newWorkersRpcResponse(request, new GameApiServer(this.env));
+      return newWorkersRpcResponse(request, new GameServer(this.env));
     }
-
     return new Response("Not found", { status: 404 });
   }
 }

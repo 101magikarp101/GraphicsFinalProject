@@ -1,24 +1,50 @@
 import { Vec3 } from "gl-matrix";
+import { Replicated } from "./replicated.js";
 
 export const PLAYER_SPEED = 1;
 
-export class Player {
-  position: Vec3;
+export interface PlayerState {
   id: string;
+  x: number;
+  y: number;
+  z: number;
+}
 
-  constructor(id: string, position: Vec3) {
-    this.id = id;
-    this.position = Vec3.clone(position);
+export class Player extends Replicated<PlayerState> {
+  #onChange?: () => void;
+
+  constructor(
+    isServer: boolean,
+    id: string,
+    x: number,
+    y: number,
+    z: number,
+    onChange?: () => void,
+  ) {
+    super(isServer, { id, x, y, z });
+    this.#onChange = onChange;
   }
 
-  move(direction: Vec3): void {
-    const dir = Vec3.clone(direction);
-    dir.y = 0;
-    dir.normalize();
-    this.position.add(dir);
+  get id() {
+    return this.state.id;
   }
 
-  jump(): void {
-    // TODO: apply upward velocity
+  get position(): Vec3 {
+    return new Vec3([this.state.x, this.state.y, this.state.z]);
+  }
+
+  move(direction: { x: number; y: number; z: number }) {
+    const dir = new Vec3([direction.x, 0, direction.z]);
+    if (dir.squaredMagnitude === 0) return;
+    dir.normalize().scale(PLAYER_SPEED);
+    this.state.x += dir.x;
+    this.state.z += dir.z;
+
+    if (!this.isServer) {
+      (this.peer as Player | undefined)?.move({ x: direction.x, y: direction.y, z: direction.z });
+    } else {
+      this.peer?.reconcile(this.state);
+      this.#onChange?.();
+    }
   }
 }

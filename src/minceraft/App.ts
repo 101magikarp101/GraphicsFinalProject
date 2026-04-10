@@ -1,5 +1,5 @@
 import { Vec4 } from "gl-matrix";
-import { Player } from "../game/player.js";
+import type { Player } from "../game/player.js";
 import { CanvasAnimation } from "../lib/webglutils/CanvasAnimation.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
@@ -24,7 +24,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private player: Player;
 
-  constructor(canvas: HTMLCanvasElement, textCanvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, textCanvas: HTMLCanvasElement, player: Player) {
     super(canvas);
 
     this.canvas2d = textCanvas;
@@ -32,7 +32,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.player = new Player("local", this.gui.getCamera().pos());
+    this.player = player;
 
     // Generate initial landscape
     this.chunk = new Chunk(0.0, 0.0, 64);
@@ -50,8 +50,6 @@ export class MinecraftAnimation extends CanvasAnimation {
    */
   public reset(): void {
     this.gui.reset();
-
-    this.player = new Player("local", this.gui.getCamera().pos());
   }
 
   /**
@@ -152,7 +150,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.cullFace(gl.BACK);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
-    this.drawScene(0, 0, 1280, 960);
+    this.drawScene(0, 0, this.c.width, this.c.height);
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
@@ -170,5 +168,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     //TODO: If the player is not already in the lair, launch them upwards at 10 units/sec.
+  }
+
+  public destroy(): void {
+    this.stop();
+    this.gui.destroy();
   }
 }

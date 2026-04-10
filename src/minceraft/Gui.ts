@@ -31,6 +31,7 @@ export class GUI implements IGUI {
   private width: number;
 
   private animation: MinecraftAnimation;
+  private abortController = new AbortController();
 
   private Adown: boolean = false;
   private Wdown: boolean = false;
@@ -121,8 +122,6 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
-    const _x = mouse.offsetX;
-    const _y = mouse.offsetY;
     const dx = mouse.screenX - this.prevX;
     const dy = mouse.screenY - this.prevY;
     this.prevX = mouse.screenX;
@@ -139,8 +138,6 @@ export class GUI implements IGUI {
     if (this.Adown) answer.add(this.camera.right().negate());
     if (this.Sdown) answer.add(this.camera.forward());
     if (this.Ddown) answer.add(this.camera.right());
-    answer.y = 0;
-    answer.normalize();
     return answer;
   }
 
@@ -207,19 +204,16 @@ export class GUI implements IGUI {
    * @param canvas The canvas being used
    */
   private registerEventListeners(canvas: HTMLCanvasElement): void {
-    /* Event listener for key controls */
-    window.addEventListener("keydown", (key: KeyboardEvent) => this.onKeydown(key));
+    const { signal } = this.abortController;
+    window.addEventListener("keydown", (key: KeyboardEvent) => this.onKeydown(key), { signal });
+    window.addEventListener("keyup", (key: KeyboardEvent) => this.onKeyup(key), { signal });
+    canvas.addEventListener("mousedown", (mouse: MouseEvent) => this.dragStart(mouse), { signal });
+    canvas.addEventListener("mousemove", (mouse: MouseEvent) => this.drag(mouse), { signal });
+    canvas.addEventListener("mouseup", (mouse: MouseEvent) => this.dragEnd(mouse), { signal });
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
+  }
 
-    window.addEventListener("keyup", (key: KeyboardEvent) => this.onKeyup(key));
-
-    /* Event listener for mouse controls */
-    canvas.addEventListener("mousedown", (mouse: MouseEvent) => this.dragStart(mouse));
-
-    canvas.addEventListener("mousemove", (mouse: MouseEvent) => this.drag(mouse));
-
-    canvas.addEventListener("mouseup", (mouse: MouseEvent) => this.dragEnd(mouse));
-
-    /* Event listener to stop the right click menu */
-    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  public destroy(): void {
+    this.abortController.abort();
   }
 }

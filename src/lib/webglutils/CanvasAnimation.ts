@@ -154,18 +154,24 @@ export abstract class CanvasAnimation {
    */
   public abstract draw(): void;
 
+  private animationFrameId = 0;
+
   /**
    * Draws and then requests a draw for the next frame.
    */
   public drawLoop(): void {
     this.draw();
-    window.requestAnimationFrame(() => this.drawLoop());
+    this.animationFrameId = window.requestAnimationFrame(() => this.drawLoop());
   }
 
   /**
    * Starts the draw loop of the animation
    */
   public start(): void {
-    window.requestAnimationFrame(() => this.drawLoop());
+    this.animationFrameId = window.requestAnimationFrame(() => this.drawLoop());
+  }
+
+  public stop(): void {
+    cancelAnimationFrame(this.animationFrameId);
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Chunk } from "../src/minceraft/Chunk.js";
+import { Chunk } from "../src/game/chunk.js";
 
 describe("Chunk", () => {
   it("generates the correct number of cubes", () => {
