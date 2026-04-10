@@ -11,5 +11,19 @@
   "assets": {
     "not_found_handling": "single-page-application"
   },
-  "preview_urls": true
+  "preview_urls": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GameState",
+        "class_name": "GameState"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GameState"]
+    }
+  ]
 }

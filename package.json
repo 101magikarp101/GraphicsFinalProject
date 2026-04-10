@@ -14,7 +14,9 @@
     "format": "biome format --write src/ tests/"
   },
   "dependencies": {
+    "@cloudflare/actors": "^0.0.1-beta.6",
     "capnweb": "^0.6.1",
+    "drizzle-orm": "^0.45.2",
     "gl-matrix": "^4.0.0-beta.2",
     "rand-seed": "^3.0.0",
     "solid-js": "^1.9.12"
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",
     "@cloudflare/vite-plugin": "^1.31.2",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^6.0.2",
     "vite": "^8.0.8",
     "vite-plugin-solid": "^2.11.12",
