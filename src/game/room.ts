@@ -3,12 +3,12 @@ import { RpcTarget } from "capnweb";
 import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
-import migrations from "../../drizzle/migrations.js";
-import * as schema from "../server/schema.js";
-import { Player, type PlayerInput, type PlayerState } from "./player.js";
-import type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol.js";
+import migrations from "../../drizzle/migrations";
+import * as schema from "../server/schema";
+import { Player, type PlayerInput, type PlayerState } from "./player";
+import type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
 
-export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol.js";
+export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol";
 
 const TICK_MS = 50;
 const PERSIST_EVERY_N_TICKS = 50;
@@ -141,11 +141,7 @@ export class GameRoom extends Actor<Env> {
   }
 }
 
-interface GameRoomStub {
-  join(playerId: string, onSnapshot: SnapshotListener): Promise<void>;
-  sendInputs(playerId: string, inputs: PlayerInput[]): Promise<void>;
-  leave(playerId: string): Promise<void>;
-}
+type GameRoomStub = DurableObjectStub<GameRoom>;
 
 export class RoomSession extends RpcTarget implements RoomSessionApi {
   #room: GameRoomStub;
@@ -159,13 +155,13 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   }
 
   sendInputs(inputs: PlayerInput[]) {
-    this.#room.sendInputs(this.#playerId, inputs);
+    return this.#room.sendInputs(this.#playerId, inputs);
   }
 
   leave() {
     if (this.#left) return;
     this.#left = true;
-    this.#room.leave(this.#playerId);
+    return this.#room.leave(this.#playerId);
   }
 
   [Symbol.dispose]() {
@@ -183,7 +179,7 @@ export class GameServer extends RpcTarget implements GameApi {
 
   async join(roomId: string, playerId: string, onSnapshot: SnapshotListener) {
     const id = this.#env.GameRoom.idFromName(roomId);
-    const stub = this.#env.GameRoom.get(id) as unknown as GameRoomStub;
+    const stub = this.#env.GameRoom.get(id);
     await stub.join(playerId, onSnapshot);
     return new RoomSession(stub, playerId);
   }

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite";
 import glsl from "vite-plugin-glsl";
@@ -7,6 +8,13 @@ import solid from "vite-plugin-solid";
 // with `@cloudflare/vitest-pool-workers`) and `solid()` (pulls in jsdom).
 export const sharedPlugins = [glsl()];
 
+export const sharedAliases = {
+  "~": fileURLToPath(new URL("./src", import.meta.url)),
+};
+
 export default defineConfig({
   plugins: [...sharedPlugins, solid(), cloudflare()],
+  resolve: {
+    alias: sharedAliases,
+  },
 });

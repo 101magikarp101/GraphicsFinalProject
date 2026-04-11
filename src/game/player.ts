@@ -1,5 +1,5 @@
 import { Vec3 } from "gl-matrix";
-import { Entity } from "./entity.js";
+import { Entity } from "./entity";
 
 export const PLAYER_SPEED = 1;
 

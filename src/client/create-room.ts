@@ -1,8 +1,8 @@
 import { newWebSocketRpcSession } from "capnweb";
 import { createSignal, onCleanup } from "solid-js";
-import { Player, type PlayerInput, playerDistanceSq } from "../game/player.js";
-import type { GameApi, RoomSnapshot } from "../game/protocol.js";
-import { ClientEntity } from "./replication.js";
+import { Player, type PlayerInput, playerDistanceSq } from "../game/player";
+import type { GameApi, RoomSnapshot } from "../game/protocol";
+import { ClientEntity } from "./replication";
 
 const INPUT_SEND_INTERVAL_MS = 50;
 

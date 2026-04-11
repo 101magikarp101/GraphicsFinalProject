@@ -13,6 +13,10 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
+    "paths": {
+      "~/*": ["./src/*"]
+    },
+
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,

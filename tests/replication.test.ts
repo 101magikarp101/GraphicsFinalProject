@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ClientEntity } from "../src/client/replication.js";
-import { PLAYER_SPEED, Player, playerDistanceSq } from "../src/game/player.js";
+import { ClientEntity } from "../src/client/replication";
+import { PLAYER_SPEED, Player, playerDistanceSq } from "../src/game/player";
 
 function makeReplicated(x = 0, z = 0) {
   const player = new Player({ id: "p1", x, y: 100, z });

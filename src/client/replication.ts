@@ -1,4 +1,4 @@
-import type { Entity } from "../game/entity.js";
+import type { Entity } from "../game/entity";
 
 const DEFAULT_DRIFT_SQ = 4;
 

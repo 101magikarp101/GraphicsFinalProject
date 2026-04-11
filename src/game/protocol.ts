@@ -1,4 +1,4 @@
-import type { PlayerInput, PlayerState } from "./player.js";
+import type { PlayerInput, PlayerState } from "./player";
 
 export interface RoomSnapshot {
   tick: number;

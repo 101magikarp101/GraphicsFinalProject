@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PLAYER_SPEED, Player } from "../src/game/player.js";
+import { PLAYER_SPEED, Player } from "../src/game/player";
 
 describe("Player", () => {
   it("initializes with given position", () => {
