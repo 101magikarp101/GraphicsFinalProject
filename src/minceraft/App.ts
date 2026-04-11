@@ -5,7 +5,8 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
-import { blankCubeFSText, blankCubeVSText } from "./Shaders.js";
+import blankCubeFSText from "./shaders/blankCube.frag";
+import blankCubeVSText from "./shaders/blankCube.vert";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;

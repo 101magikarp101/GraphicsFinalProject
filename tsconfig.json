@@ -22,7 +22,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
 
-    "types": ["vite/client"]
+    "types": ["vite/client", "vite-plugin-glsl/ext"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "drizzle/*.js", "worker-configuration.d.ts"],
   "exclude": ["node_modules"]

@@ -3,9 +3,9 @@ import { env, exports as workerExports } from "cloudflare:workers";
 import { RpcSession, type RpcTransport } from "capnweb";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { GameApi, RoomSnapshot } from "../../src/game/protocol.ts";
-import { GameRoom } from "../../src/game/room.ts";
+import type { GameRoom } from "../../src/game/room.ts";
 
-// ---- capnweb HTTP batch transport that routes through SELF.fetch ----
+// ---- capnweb HTTP batch transport routed through the in-process Worker ----
 
 class WorkersBatchTransport implements RpcTransport {
   #toSend: string[] | null = [];
@@ -157,7 +157,7 @@ describe("GameRoom Durable Object", () => {
 
 describe("GameServer capnweb RPC", () => {
   it("returns a RoomSession capability and delivers the initial snapshot via the callback", async () => {
-    const { api, session: rpc } = openGameApi();
+    const { api } = openGameApi();
     const received: RoomSnapshot[] = [];
 
     const session = await api.join("rpc-room", "alice", (snap) => {
@@ -169,7 +169,5 @@ describe("GameServer capnweb RPC", () => {
     expect(received.length).toBeGreaterThanOrEqual(1);
     expect(received[0]?.players.alice).toBeDefined();
     expect(received[0]?.players.alice?.y).toBeCloseTo(100);
-
-    await rpc.drain();
   });
 });
