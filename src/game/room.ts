@@ -5,7 +5,7 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations.js";
 import * as schema from "../server/schema.js";
-import { Player, type PlayerInput } from "./player.js";
+import { Player, type PlayerInput, type PlayerState } from "./player.js";
 import type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol.js";
 
 export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol.js";
@@ -29,7 +29,8 @@ function notify(cb: SnapshotListener, snap: RoomSnapshot) {
 
 export class GameRoom extends Actor<Env> {
   private players = new Map<string, Player>();
-  private inputs = new Map<string, PlayerInput>();
+  private inputQueues = new Map<string, PlayerInput[]>();
+  private acks = new Map<string, number>();
   private listeners = new Map<string, SnapshotListener>();
   private dirty = new Set<string>();
   private tick = 0;
@@ -54,30 +55,39 @@ export class GameRoom extends Actor<Env> {
     this.ensureAlarm();
   }
 
-  sendInput(playerId: string, input: PlayerInput) {
-    this.inputs.set(playerId, input);
+  sendInputs(playerId: string, inputs: PlayerInput[]) {
+    const queue = this.inputQueues.get(playerId);
+    if (queue) {
+      queue.push(...inputs);
+    } else {
+      this.inputQueues.set(playerId, [...inputs]);
+    }
   }
 
   leave(playerId: string) {
     this.listeners.delete(playerId);
-    this.inputs.delete(playerId);
+    this.inputQueues.delete(playerId);
   }
 
   override async onAlarm(): Promise<void> {
     this.tick++;
 
     let changedThisTick = false;
-    for (const [id, input] of this.inputs) {
+    for (const [id, queue] of this.inputQueues) {
+      if (queue.length === 0) continue;
       const player = this.players.get(id);
       if (!player) continue;
       const { x, z } = player.state;
-      player.step(input);
+      for (const input of queue) {
+        player.step(input);
+      }
+      this.acks.set(id, (this.acks.get(id) ?? 0) + queue.length);
+      queue.length = 0;
       if (player.state.x !== x || player.state.z !== z) {
         this.dirty.add(id);
         changedThisTick = true;
       }
     }
-    this.inputs.clear();
 
     if (changedThisTick && this.listeners.size > 0) {
       const snap = this.snapshot();
@@ -98,11 +108,13 @@ export class GameRoom extends Actor<Env> {
   }
 
   private snapshot(): RoomSnapshot {
-    const players: Record<string, Player["state"]> = {};
+    const players: Record<string, PlayerState> = {};
+    const acks: Record<string, number> = {};
     for (const [id, player] of this.players) {
       players[id] = player.state;
+      acks[id] = this.acks.get(id) ?? 0;
     }
-    return { tick: this.tick, players };
+    return { tick: this.tick, players, acks };
   }
 
   private flush() {
@@ -131,7 +143,7 @@ export class GameRoom extends Actor<Env> {
 
 interface GameRoomStub {
   join(playerId: string, onSnapshot: SnapshotListener): Promise<void>;
-  sendInput(playerId: string, input: PlayerInput): Promise<void>;
+  sendInputs(playerId: string, inputs: PlayerInput[]): Promise<void>;
   leave(playerId: string): Promise<void>;
 }
 
@@ -146,8 +158,8 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     this.#playerId = playerId;
   }
 
-  sendInput(input: PlayerInput) {
-    this.#room.sendInput(this.#playerId, input);
+  sendInputs(inputs: PlayerInput[]) {
+    this.#room.sendInputs(this.#playerId, inputs);
   }
 
   leave() {

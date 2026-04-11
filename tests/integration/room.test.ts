@@ -87,7 +87,7 @@ describe("GameRoom Durable Object", () => {
 
     await runInDurableObject(stub, async (room: GameRoom) => {
       room.join("alice", (snap) => received.push(snap));
-      room.sendInput("alice", { dx: 1, dz: 0 });
+      room.sendInputs("alice", [{ dx: 1, dz: 0 }]);
     });
 
     const alarmRan = await runDurableObjectAlarm(stub);
@@ -98,6 +98,7 @@ describe("GameRoom Durable Object", () => {
     const latest = received[received.length - 1];
     expect(latest?.players.alice?.x).toBeGreaterThan(0);
     expect(latest?.tick).toBe(1);
+    expect(latest?.acks.alice).toBe(1);
   });
 
   it("broadcasts each player's input to every listener in the room", async () => {
@@ -108,8 +109,8 @@ describe("GameRoom Durable Object", () => {
     await runInDurableObject(stub, async (room: GameRoom) => {
       room.join("alice", (snap) => aliceSnaps.push(snap));
       room.join("bob", (snap) => bobSnaps.push(snap));
-      room.sendInput("alice", { dx: 0, dz: -1 });
-      room.sendInput("bob", { dx: 1, dz: 0 });
+      room.sendInputs("alice", [{ dx: 0, dz: -1 }]);
+      room.sendInputs("bob", [{ dx: 1, dz: 0 }]);
     });
 
     await runDurableObjectAlarm(stub);
@@ -131,7 +132,7 @@ describe("GameRoom Durable Object", () => {
       room.leave("alice");
       // Another player keeps the room ticking so broadcasts would fire
       room.join("bob", () => {});
-      room.sendInput("bob", { dx: 1, dz: 0 });
+      room.sendInputs("bob", [{ dx: 1, dz: 0 }]);
     });
 
     const initialCount = aliceSnaps.length;

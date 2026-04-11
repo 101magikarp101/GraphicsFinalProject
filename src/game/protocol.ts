@@ -3,10 +3,11 @@ import type { PlayerInput, PlayerState } from "./player.js";
 export interface RoomSnapshot {
   tick: number;
   players: Record<string, PlayerState>;
+  acks: Record<string, number>;
 }
 
 export interface RoomSessionApi {
-  sendInput(input: PlayerInput): void;
+  sendInputs(inputs: PlayerInput[]): void;
   leave(): void;
 }
 

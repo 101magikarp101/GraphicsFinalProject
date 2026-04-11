@@ -9,25 +9,25 @@ const INPUT_SEND_INTERVAL_MS = 50;
 export function createRoom(roomId: string, playerId: string) {
   const player = new Player({ id: playerId, x: 0, y: 100, z: 0 });
   const replicated = new ClientEntity(player, playerDistanceSq);
-  const [snapshot, setSnapshot] = createSignal<RoomSnapshot>({ tick: 0, players: {} });
+  const [snapshot, setSnapshot] = createSignal<RoomSnapshot>({ tick: 0, players: {}, acks: {} });
 
   const api = newWebSocketRpcSession<GameApi>(`wss://${window.location.host}/api`);
   const session = api.join(roomId, playerId, (snap: RoomSnapshot) => {
     setSnapshot(snap);
     const auth = snap.players[playerId];
-    if (auth) replicated.reconcile(auth);
+    if (auth) replicated.reconcile(auth, snap.acks[playerId] ?? 0);
   });
 
-  let pending: PlayerInput | null = null;
+  let unsent: PlayerInput[] = [];
   const sendTimer = setInterval(() => {
-    if (!pending) return;
-    session.sendInput(pending);
-    pending = null;
+    if (unsent.length === 0) return;
+    session.sendInputs(unsent);
+    unsent = [];
   }, INPUT_SEND_INTERVAL_MS);
 
   function input(next: PlayerInput) {
-    player.step(next);
-    pending = next;
+    replicated.predict(next);
+    unsent.push(next);
   }
 
   onCleanup(() => {
