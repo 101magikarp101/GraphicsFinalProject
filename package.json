@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "lint": "biome check src/ tests/",
     "lint:fix": "biome check --write src/ tests/",
-    "format": "biome format --write src/ tests/"
+    "format": "biome format --write src/ tests/",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cloudflare/actors": "^0.0.1-beta.6",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",
     "@cloudflare/vite-plugin": "^1.31.2",
+    "@cloudflare/vitest-pool-workers": "^0.14.3",
     "drizzle-kit": "^0.31.10",
     "typescript": "^6.0.2",
     "vite": "^8.0.8",

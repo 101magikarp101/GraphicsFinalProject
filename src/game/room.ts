@@ -5,30 +5,34 @@ import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlit
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations.js";
 import * as schema from "../server/schema.js";
-import { Player, type PlayerState } from "./player.js";
+import { Player, type PlayerInput } from "./player.js";
+import type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol.js";
 
-const FLUSH_DELAY_MS = 5_000;
+export type { GameApi, RoomSessionApi, RoomSnapshot } from "./protocol.js";
 
-// ---- Shared types (client imports via `import type`) ----
+const TICK_MS = 50;
+const PERSIST_EVERY_N_TICKS = 50;
+const SPAWN_POSITION = { x: 0, y: 100, z: 0 };
 
-export interface RoomState {
-  players: Record<string, PlayerState>;
+type SnapshotListener = (snap: RoomSnapshot) => unknown;
+
+function notify(cb: SnapshotListener, snap: RoomSnapshot) {
+  try {
+    const result = cb(snap);
+    if (result && typeof (result as Promise<unknown>).then === "function") {
+      (result as Promise<unknown>).catch(() => {});
+    }
+  } catch {
+    // capnweb surfaces broken stubs via onRpcBroken elsewhere
+  }
 }
-
-export interface RoomSessionApi {
-  leave(): void;
-}
-
-export interface GameApi {
-  join(roomId: string, clientPlayer: Player, onUpdate: (state: RoomState) => void): RoomSessionApi;
-}
-
-// ---- Game Room (Durable Object) ----
 
 export class GameRoom extends Actor<Env> {
   private players = new Map<string, Player>();
-  private listeners = new Set<(state: RoomState) => void>();
+  private inputs = new Map<string, PlayerInput>();
+  private listeners = new Map<string, SnapshotListener>();
   private dirty = new Set<string>();
+  private tick = 0;
   private db!: DrizzleSqliteDODatabase<typeof schema>;
 
   override async onInit() {
@@ -36,71 +40,72 @@ export class GameRoom extends Actor<Env> {
     migrate(this.db, migrations);
 
     for (const row of this.db.select().from(schema.players).all()) {
-      this.players.set(
-        row.id,
-        new Player(true, row.id, row.x, row.y, row.z, () => {
-          this.dirty.add(row.id);
-          this.scheduleFlush();
-          this.broadcast();
-        }),
-      );
+      this.players.set(row.id, new Player({ id: row.id, x: row.x, y: row.y, z: row.z }));
     }
   }
 
-  subscribe(onUpdate: (state: RoomState) => void): () => void {
-    this.listeners.add(onUpdate);
-    onUpdate(this.getRoomState());
-    return () => {
-      this.listeners.delete(onUpdate);
-    };
-  }
-
-  joinPlayer(clientPlayer: Player, playerId: string, x: number, y: number, z: number) {
-    const serverPlayer = new Player(true, playerId, x, y, z, () => {
+  join(playerId: string, onSnapshot: SnapshotListener) {
+    if (!this.players.has(playerId)) {
+      this.players.set(playerId, new Player({ id: playerId, ...SPAWN_POSITION }));
       this.dirty.add(playerId);
-      this.scheduleFlush();
-      this.broadcast();
-    });
-    serverPlayer.setPeer(clientPlayer);
-    clientPlayer.setPeer(serverPlayer);
-    this.players.set(playerId, serverPlayer);
-    this.dirty.add(playerId);
-    this.scheduleFlush();
-    this.broadcast();
-    return serverPlayer;
-  }
-
-  leavePlayer(playerId: string) {
-    this.players.delete(playerId);
-    this.dirty.add(playerId);
-    this.scheduleFlush();
-    this.broadcast();
-  }
-
-  private getRoomState(): RoomState {
-    const players: Record<string, PlayerState> = {};
-    for (const [id, player] of this.players) {
-      players[id] = player.state;
     }
-    return { players };
+    this.listeners.set(playerId, onSnapshot);
+    notify(onSnapshot, this.snapshot());
+    this.ensureAlarm();
   }
 
-  private broadcast() {
-    const state = this.getRoomState();
-    for (const listener of this.listeners) {
-      try {
-        listener(state);
-      } catch {
-        this.listeners.delete(listener);
-      }
-    }
+  sendInput(playerId: string, input: PlayerInput) {
+    this.inputs.set(playerId, input);
   }
 
-  private scheduleFlush() {
-    this.ctx.storage.setAlarm(Date.now() + FLUSH_DELAY_MS);
+  leave(playerId: string) {
+    this.listeners.delete(playerId);
+    this.inputs.delete(playerId);
   }
 
   override async onAlarm(): Promise<void> {
+    this.tick++;
+
+    let changedThisTick = false;
+    for (const [id, input] of this.inputs) {
+      const player = this.players.get(id);
+      if (!player) continue;
+      const { x, z } = player.state;
+      player.step(input);
+      if (player.state.x !== x || player.state.z !== z) {
+        this.dirty.add(id);
+        changedThisTick = true;
+      }
+    }
+    this.inputs.clear();
+
+    if (changedThisTick && this.listeners.size > 0) {
+      const snap = this.snapshot();
+      for (const cb of this.listeners.values()) {
+        notify(cb, snap);
+      }
+    }
+
+    if (this.tick % PERSIST_EVERY_N_TICKS === 0 && this.dirty.size > 0) {
+      this.flush();
+    }
+
+    if (this.listeners.size > 0) {
+      this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+    } else if (this.dirty.size > 0) {
+      this.flush();
+    }
+  }
+
+  private snapshot(): RoomSnapshot {
+    const players: Record<string, Player["state"]> = {};
+    for (const [id, player] of this.players) {
+      players[id] = player.state;
+    }
+    return { tick: this.tick, players };
+  }
+
+  private flush() {
     for (const id of this.dirty) {
       const player = this.players.get(id);
       if (player) {
@@ -118,52 +123,45 @@ export class GameRoom extends Actor<Env> {
     }
     this.dirty.clear();
   }
-}
 
-// ---- RPC Layer (capnweb capability pattern) ----
+  private ensureAlarm() {
+    this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  }
+}
 
 interface GameRoomStub {
-  subscribe(onUpdate: (state: RoomState) => void): Promise<() => void>;
-  joinPlayer(
-    clientPlayer: Player,
-    playerId: string,
-    x: number,
-    y: number,
-    z: number,
-  ): Promise<Player>;
-  leavePlayer(playerId: string): Promise<void>;
+  join(playerId: string, onSnapshot: SnapshotListener): Promise<void>;
+  sendInput(playerId: string, input: PlayerInput): Promise<void>;
+  leave(playerId: string): Promise<void>;
 }
 
-export class RoomSession extends RpcTarget {
-  #stub: GameRoomStub;
+export class RoomSession extends RpcTarget implements RoomSessionApi {
+  #room: GameRoomStub;
   #playerId: string;
-  #unsubscribe?: () => void;
+  #left = false;
 
-  private constructor(stub: GameRoomStub, playerId: string) {
+  constructor(room: GameRoomStub, playerId: string) {
     super();
-    this.#stub = stub;
+    this.#room = room;
     this.#playerId = playerId;
   }
 
-  static async create(
-    stub: GameRoomStub,
-    clientPlayer: Player,
-    playerId: string,
-    onUpdate: (state: RoomState) => void,
-  ) {
-    const session = new RoomSession(stub, playerId);
-    session.#unsubscribe = await stub.subscribe(onUpdate);
-    await stub.joinPlayer(clientPlayer, playerId, 0, 100, 0);
-    return session;
+  sendInput(input: PlayerInput) {
+    this.#room.sendInput(this.#playerId, input);
   }
 
   leave() {
-    this.#unsubscribe?.();
-    return this.#stub.leavePlayer(this.#playerId);
+    if (this.#left) return;
+    this.#left = true;
+    this.#room.leave(this.#playerId);
+  }
+
+  [Symbol.dispose]() {
+    this.leave();
   }
 }
 
-export class GameServer extends RpcTarget {
+export class GameServer extends RpcTarget implements GameApi {
   #env: Env;
 
   constructor(env: Env) {
@@ -171,9 +169,10 @@ export class GameServer extends RpcTarget {
     this.#env = env;
   }
 
-  async join(roomId: string, clientPlayer: Player, onUpdate: (state: RoomState) => void) {
+  async join(roomId: string, playerId: string, onSnapshot: SnapshotListener) {
     const id = this.#env.GameRoom.idFromName(roomId);
     const stub = this.#env.GameRoom.get(id) as unknown as GameRoomStub;
-    return RoomSession.create(stub, clientPlayer, clientPlayer.state.id, onUpdate);
+    await stub.join(playerId, onSnapshot);
+    return new RoomSession(stub, playerId);
   }
 }

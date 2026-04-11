@@ -17,12 +17,12 @@ export default function App() {
   let glCanvasRef!: HTMLCanvasElement;
   let textCanvasRef!: HTMLCanvasElement;
 
-  const { player } = createRoom("world-1", crypto.randomUUID());
+  const { player, input } = createRoom("world-1", crypto.randomUUID());
 
   onMount(() => {
     scaleCanvasToDPR(glCanvasRef);
     scaleCanvasToDPR(textCanvasRef);
-    const animation = new MinecraftAnimation(glCanvasRef, textCanvasRef, player);
+    const animation = new MinecraftAnimation(glCanvasRef, textCanvasRef, player, input);
     animation.start();
     onCleanup(() => animation.destroy());
   });

@@ -1,5 +1,5 @@
 import { Vec4 } from "gl-matrix";
-import type { Player } from "../game/player.js";
+import type { Player, PlayerInput } from "../game/player.js";
 import { CanvasAnimation } from "../lib/webglutils/CanvasAnimation.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
@@ -23,8 +23,14 @@ export class MinecraftAnimation extends CanvasAnimation {
   private canvas2d: HTMLCanvasElement;
 
   private player: Player;
+  private sendInput: (input: PlayerInput) => void;
 
-  constructor(canvas: HTMLCanvasElement, textCanvas: HTMLCanvasElement, player: Player) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    textCanvas: HTMLCanvasElement,
+    player: Player,
+    sendInput: (input: PlayerInput) => void,
+  ) {
     super(canvas);
 
     this.canvas2d = textCanvas;
@@ -33,6 +39,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.gui = new GUI(this.canvas2d, this);
     this.player = player;
+    this.sendInput = sendInput;
 
     // Generate initial landscape
     this.chunk = new Chunk(0.0, 0.0, 64);
@@ -135,7 +142,8 @@ export class MinecraftAnimation extends CanvasAnimation {
    */
   public draw(): void {
     //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
-    this.player.move(this.gui.walkDir());
+    const walk = this.gui.walkDir();
+    this.sendInput({ dx: walk.x, dz: walk.z });
 
     this.gui.getCamera().setPos(this.player.position);
 
