@@ -1,3 +1,7 @@
+/**
+ * A square patch of terrain. Generates cube positions procedurally using
+ * multi-octave value noise and exposes them as a flat `Float32Array` for the GPU.
+ */
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
@@ -31,14 +35,7 @@ export class Chunk {
   }
 
   // Bilinear interpolation with smoothstep
-  private bilerp(
-    v00: number,
-    v10: number,
-    v01: number,
-    v11: number,
-    tx: number,
-    tz: number,
-  ): number {
+  private bilerp(v00: number, v10: number, v01: number, v11: number, tx: number, tz: number): number {
     const sx = this.smoothstep(tx);
     const sz = this.smoothstep(tz);
     const v0 = v00 * (1 - sx) + v10 * sx;
@@ -115,10 +112,12 @@ export class Chunk {
     }
   }
 
+  /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
   }
 
+  /** Returns the number of cubes to render this frame. */
   public numCubes(): number {
     return this.cubes;
   }
