@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { perlin3D, perlin3DOctaves, hash3D } from "../src/utils/noise";
+import { hash3D, perlin3D, perlin3DOctaves } from "../src/utils/noise";
 
 describe("hash3D", () => {
   it("returns deterministic values", () => {

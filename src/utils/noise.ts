@@ -1,5 +1,4 @@
-import { bilerp } from "./interpolations";
-import { smoothstep } from "./interpolations";
+import { bilerp, smoothstep } from "./interpolations";
 
 /** Maps integer coordinates (x, z) to a pseudorandom value in [0, 1] */
 export function hash2D(seed: number, x: number, z: number): number {
@@ -22,9 +21,18 @@ export function hash3D(seed: number, x: number, y: number, z: number): number {
 
 // 12 gradient vectors for 3D Perlin noise (edges of a cube)
 const GRAD3: [number, number, number][] = [
-  [1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0],
-  [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
-  [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1],
+  [1, 1, 0],
+  [-1, 1, 0],
+  [1, -1, 0],
+  [-1, -1, 0],
+  [1, 0, 1],
+  [-1, 0, 1],
+  [1, 0, -1],
+  [-1, 0, -1],
+  [0, 1, 1],
+  [0, -1, 1],
+  [0, 1, -1],
+  [0, -1, -1],
 ];
 
 /** Gradient dot product at a 3D lattice point */
@@ -73,8 +81,14 @@ export function perlin3D(seed: number, x: number, y: number, z: number, frequenc
 
 /** Multi-octave 3D Perlin noise (fBm) */
 export function perlin3DOctaves(
-  seed: number, x: number, y: number, z: number, frequency: number,
-  octaves: number = 3, lacunarity: number = 2.0, persistence: number = 0.5,
+  seed: number,
+  x: number,
+  y: number,
+  z: number,
+  frequency: number,
+  octaves: number = 3,
+  lacunarity: number = 2.0,
+  persistence: number = 0.5,
 ): number {
   let value = 0;
   let amp = 1;

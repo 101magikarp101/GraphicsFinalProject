@@ -28,9 +28,17 @@ export function bilerp(v00: number, v10: number, v01: number, v11: number, tx: n
 
 /** Trilinear interpolation with smoothstep (fade) on all three axes */
 export function trilerp(
-  v000: number, v100: number, v010: number, v110: number,
-  v001: number, v101: number, v011: number, v111: number,
-  tx: number, ty: number, tz: number,
+  v000: number,
+  v100: number,
+  v010: number,
+  v110: number,
+  v001: number,
+  v101: number,
+  v011: number,
+  v111: number,
+  tx: number,
+  ty: number,
+  tz: number,
 ): number {
   const sx = smoothstep(tx);
   const sy = smoothstep(ty);

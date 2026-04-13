@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Chunk, CHUNK_HEIGHT } from "../src/game/chunk";
 import { CubeType } from "../src/client/engine/render/cube-types";
+import { CHUNK_HEIGHT, Chunk } from "../src/game/chunk";
 
 describe("Chunk", () => {
   it("generates a positive number of cubes", () => {
