@@ -203,6 +203,8 @@ export function createGame(args: CreateGameArgs): GameState {
       projMatrix: camera.projMatrix(),
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
+      cubeFaceTiles0: chunks.faceTiles0,
+      cubeFaceTiles1: chunks.faceTiles1,
       numCubes: chunks.count,
       lightPosition: LIGHT_POSITION,
       backgroundColor: BACKGROUND_COLOR,
