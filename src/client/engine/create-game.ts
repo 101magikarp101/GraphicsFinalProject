@@ -2,7 +2,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3, Vec4 } from "gl-matrix";
 import { createStore, unwrap } from "solid-js/store";
-import type { Player, PlayerInput } from "@/game/player";
+import type { Player, PlayerInput, PlayerPositionPacket } from "@/game/player";
 import { createRateMeter, createRingBuffer } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
@@ -30,6 +30,10 @@ export interface ClientDiagnostics {
   computeTimeMs: number;
   /** Rolling ring-buffer of recent compute times for sparkline display. */
   computeTimeHistory: number[];
+  /** GPU-measured draw time via EXT_disjoint_timer_query (ms). 0 if unsupported. */
+  gpuTimeMs: number;
+  /** Rolling ring-buffer of recent GPU times for sparkline display. */
+  gpuTimeHistory: number[];
   pointerLocked: boolean;
 }
 
@@ -92,6 +96,8 @@ export function createGame(args: CreateGameArgs): GameState {
         frameCount: 0,
         computeTimeMs: 0,
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
+        gpuTimeMs: 0,
+        gpuTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         pointerLocked: false,
       },
       server: {
@@ -109,10 +115,9 @@ export function createGame(args: CreateGameArgs): GameState {
   const tpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   let frame = 0;
-  let lastYaw = 0;
-  let lastPitch = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
   let tickDelta = 0;
@@ -123,13 +128,14 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   // TODO: refactor to be general packet handling rather than only inputs
-  let unsent: PlayerInput[] = [];
+  let nextPacketSequence = 1;
+  let pendingPacket: PlayerPositionPacket | undefined;
   makeTimer(
     () => {
       const s = room().session();
-      if (unsent.length === 0 || !s) return;
-      s.sendInputs(unsent);
-      unsent = [];
+      if (!pendingPacket || !s) return;
+      s.sendPosition(pendingPacket);
+      pendingPacket = undefined;
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -175,16 +181,25 @@ export function createGame(args: CreateGameArgs): GameState {
         };
     const yaw = camera.yaw();
     const pitch = camera.pitch();
-    if (inputEnabled() && (walk.x !== 0 || walk.y !== 0 || walk.z !== 0 || yaw !== lastYaw || pitch !== lastPitch)) {
-      lastYaw = yaw;
-      lastPitch = pitch;
+    if (inputEnabled()) {
       const next: PlayerInput = { dx: walk.x, dy: walk.y, dz: walk.z, dtSeconds: inputDt, yaw, pitch };
       room().replicated()?.predict(next);
-      unsent.push(next);
+      pendingPacket = {
+        sequence: nextPacketSequence++,
+        x: player.state.x,
+        y: player.state.y,
+        z: player.state.z,
+        yaw: player.state.yaw,
+        pitch: player.state.pitch,
+      };
     }
     camera.setPosition(player.position);
 
     chunks.update(player.position.x, player.position.z);
+
+    const viewMatrix = camera.viewMatrix();
+    const projMatrix = camera.projMatrix();
+    chunks.cull(viewMatrix, projMatrix);
 
     // --- Remote entities ---
     const snap = room().snapshot;
@@ -199,8 +214,8 @@ export function createGame(args: CreateGameArgs): GameState {
     const { buffers, count } = remotePlayers.frame(now);
     const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
     renderer.render({
-      viewMatrix: camera.viewMatrix(),
-      projMatrix: camera.projMatrix(),
+      viewMatrix,
+      projMatrix,
       cubePositions: chunks.positions,
       cubeColors: chunks.colors,
       cubeFaceTiles0: chunks.faceTiles0,
@@ -214,8 +229,10 @@ export function createGame(args: CreateGameArgs): GameState {
     // --- Diagnostics (producers → store) ---
     frame++;
     const computeTimeMs = performance.now() - tickStart;
+    const gpuTimeMs = renderer.gpuTimer.lastTimeMs;
     fpsMeter.sample(dt, 1);
     computeHistory.push(computeTimeMs);
+    gpuHistory.push(gpuTimeMs);
     tpsMeter.sample(dt, tickDelta);
     tickDelta = 0;
     const currentSnapCount = room().snapCount();
@@ -228,6 +245,8 @@ export function createGame(args: CreateGameArgs): GameState {
       frameCount: frame,
       computeTimeMs,
       computeTimeHistory: computeHistory.ordered(),
+      gpuTimeMs,
+      gpuTimeHistory: gpuHistory.ordered(),
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {
