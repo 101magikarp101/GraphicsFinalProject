@@ -10,7 +10,7 @@ import type { BlockActionPacket, ServerPacket } from "./protocol";
 
 const MAX_INTERACT_DISTANCE_SQ = 7 * 7;
 const MAX_ACTIONS_PER_TICK = 20;
-const CHUNKS_PER_TICK = 30;
+const CHUNKS_PER_TICK = 4;
 
 export interface BlockSystemOptions {
   /** Chunk radius for the initial load on join (default 5 → 10x10 grid). */
@@ -41,8 +41,8 @@ export class BlockSystem implements GameSystem {
   constructor(storage: ChunkStorage, playerSystem: PlayerSystem, opts?: BlockSystemOptions) {
     this.storage = storage;
     this.playerSystem = playerSystem;
-    this.initialLoadRadius = opts?.initialLoadRadius ?? 5;
-    this.loadRadius = opts?.loadRadius ?? 4;
+    this.initialLoadRadius = opts?.initialLoadRadius ?? 9;
+    this.loadRadius = opts?.loadRadius ?? 8;
   }
 
   hydrate(_db: DrizzleSqliteDODatabase<typeof schema>): void {}
