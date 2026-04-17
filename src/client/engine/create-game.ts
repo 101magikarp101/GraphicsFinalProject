@@ -251,12 +251,15 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   let packetCount = 0;
+  // Heartbeat: keep sending the latest known position at INPUT_SEND_INTERVAL_MS
+  // even when the player isn't moving. Regular RPC activity keeps the DO warm
+  // (setInterval alone doesn't prevent Cloudflare eviction); the server
+  // deduplicates by position delta and rate-limits faster-than-25ms packets.
   makeTimer(
     () => {
       const s = room().session();
       if (!pendingPacket || !s) return;
       s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
-      pendingPacket = undefined;
       packetCount++;
     },
     INPUT_SEND_INTERVAL_MS,

@@ -10,7 +10,7 @@ import type { BlockActionPacket, ServerPacket } from "./protocol";
 
 const MAX_INTERACT_DISTANCE_SQ = 7 * 7;
 const MAX_ACTIONS_PER_TICK = 20;
-const CHUNKS_PER_TICK = 4;
+const CHUNKS_PER_TICK = 2;
 
 export interface BlockSystemOptions {
   /** Chunk radius for the initial load on join (default 5 → 10x10 grid). */
@@ -52,7 +52,7 @@ export class BlockSystem implements GameSystem {
    * are broadcast to everyone; the ack (accepted or not) is returned only to
    * the acting player.
    */
-  queueAction(playerId: string, action: BlockActionPacket): void {
+  async queueAction(playerId: string, action: BlockActionPacket): Promise<void> {
     const pos = this.playerSystem.getPlayerPosition(playerId);
     if (!pos) {
       this.pushAck(playerId, action.seq, false);
@@ -75,13 +75,16 @@ export class BlockSystem implements GameSystem {
       return;
     }
 
-    const result = this.storage.applyMutation({
-      action: action.action,
-      x: action.x,
-      y: action.y,
-      z: action.z,
-      blockType: action.blockType,
-    });
+    const result = await this.storage.applyMutation(
+      {
+        action: action.action,
+        x: action.x,
+        y: action.y,
+        z: action.z,
+        blockType: action.blockType,
+      },
+      { x: pos.x, z: pos.z },
+    );
     this.pushAck(playerId, action.seq, result.accepted);
     if (result.accepted) {
       const blockType = action.action === "break" ? CubeType.Air : (action.blockType ?? CubeType.Dirt);

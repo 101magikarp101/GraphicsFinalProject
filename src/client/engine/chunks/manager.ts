@@ -83,11 +83,17 @@ export class ChunkManager {
     const batch = this.ingestQueue.splice(0, INGEST_PER_FRAME);
     this.workerBusy = true;
     const gen = this.resetGeneration;
-    void this.client.loadChunks(batch).then((result) => {
-      this.workerBusy = false;
-      if (gen !== this.resetGeneration) return;
-      this.mergeBatch(result);
-    });
+    this.client.loadChunks(batch).then(
+      (result) => {
+        this.workerBusy = false;
+        if (gen !== this.resetGeneration) return;
+        this.mergeBatch(result);
+      },
+      (err: unknown) => {
+        this.workerBusy = false;
+        console.error("[ChunkManager] worker loadChunks failed:", err);
+      },
+    );
   }
 
   /** Evicts chunks that are too far from the player's current position. */

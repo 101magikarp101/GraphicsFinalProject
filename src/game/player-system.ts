@@ -37,7 +37,7 @@ import type { ServerPacket } from "./protocol";
 
 const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
 const BASE_MOVEMENT_WINDOW_MS = 100;
-const MOVEMENT_TOLERANCE = 1;
+const MOVEMENT_TOLERANCE = 3;
 
 /**
  * Manages the set of players in a room — their in-memory state, latest pending
