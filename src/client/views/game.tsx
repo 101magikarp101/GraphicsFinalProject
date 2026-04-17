@@ -14,8 +14,6 @@ import { createGameplayUiState } from "../primitives/gameplay-ui-state";
 import { joinWorld } from "../primitives/join-world";
 import { setWorldReady } from "../state/loading";
 
-const DEATH_Y_THRESHOLD = -20;
-
 export default function GameView() {
   const [glCanvas, setGlCanvas] = createSignal<HTMLCanvasElement>();
   const [inventoryOpen, setInventoryOpen] = createSignal(false);
@@ -33,7 +31,6 @@ export default function GameView() {
     setShowDiagnostics,
   } = createGameplayPreferences();
   const ui = createGameplayUiState();
-  const [spawnPoint, setSpawnPoint] = createSignal<{ x: number; y: number; z: number }>();
 
   const anyOverlayOpen = () => ui.pauseMenuOpen() || ui.settingsOpen() || ui.deathScreenOpen();
 
@@ -60,21 +57,18 @@ export default function GameView() {
     },
   });
 
-  createEffect(() => {
-    const playerState = room.player()?.state;
-    if (!playerState || spawnPoint()) return;
-    setSpawnPoint({ x: playerState.x, y: playerState.y, z: playerState.z });
-  });
-
   createEffect(
     on(
-      () => room.player()?.state.y,
-      (y) => {
-        if (y === undefined || y > DEATH_Y_THRESHOLD || ui.deathScreenOpen()) return;
-        document.exitPointerLock?.();
-        ui.showDeathScreen();
+      () => room.player()?.state.health,
+      (health) => {
+        if (health === undefined) return;
+        if (health <= 0 && !ui.deathScreenOpen()) {
+          document.exitPointerLock?.();
+          ui.showDeathScreen();
+        } else if (health > 0 && ui.deathScreenOpen()) {
+          ui.hideDeathScreen();
+        }
       },
-      { defer: true },
     ),
   );
 
@@ -98,12 +92,7 @@ export default function GameView() {
   });
 
   const respawn = () => {
-    const spawn = spawnPoint();
-    const session = room.session();
-    if (!spawn || !session) return;
-    room.replicated()?.teleport(spawn);
-    session.teleportTo(spawn.x, spawn.y, spawn.z);
-    ui.hideDeathScreen();
+    room.session()?.respawn();
   };
 
   function selectHotbarSlot(slotIndex: number) {

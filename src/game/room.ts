@@ -269,6 +269,15 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /** Respawns a player at the world spawn with starter state. */
+  respawn(playerId: string) {
+    this.ensureInitialized();
+    this.ensureJoined(playerId);
+    if (this.playerSystem.respawn(playerId)) {
+      this.needsBroadcast = true;
+    }
+  }
+
   /**
    * Removes the player from the room; survivors see the change next tick.
    * `sessionToken` is the token handed out by `join()` — stale calls from a
@@ -544,6 +553,11 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Teleports this player to the given coordinates. */
   teleportTo(x: number, y: number, z: number) {
     return this.#call(() => this.#getRoom().teleportTo(this.#playerId, x, y, z));
+  }
+
+  /** Respawns this player at the world spawn with starter state. */
+  respawn() {
+    return this.#call(() => this.#getRoom().respawn(this.#playerId));
   }
 
   /** Applies an inventory or crafting interaction. */
