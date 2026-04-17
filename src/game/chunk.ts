@@ -111,16 +111,403 @@ export function chunkOrigin(wx: number, wz: number): [number, number] {
   ];
 }
 
-// Shared scratch buffers reused across renderChunk calls. Grow on demand so
-// total resident footprint is O(max chunk) instead of O(chunks × max chunk).
+// Shared scratch buffers reused across renderBlockData calls.
 let scratchPositions = new Float32Array(0);
 let scratchColors = new Float32Array(0);
 let scratchAmbientOcclusion = new Uint8Array(0);
+// Padded block array: (S+2) × (S+2) × (H+2) with 1-block border for branchless neighbor lookups.
+// Air = 0 in the border by default; filled from worldGet when available.
+let scratchPadded = new Uint8Array(0);
 
-function ensureScratchCapacity(maxCubes: number): void {
+function ensureScratchCapacity(maxCubes: number, paddedSize: number): void {
   if (scratchPositions.length < 4 * maxCubes) scratchPositions = new Float32Array(4 * maxCubes);
   if (scratchColors.length < 3 * maxCubes) scratchColors = new Float32Array(3 * maxCubes);
   if (scratchAmbientOcclusion.length < 24 * maxCubes) scratchAmbientOcclusion = new Uint8Array(24 * maxCubes);
+  if (scratchPadded.length < paddedSize) scratchPadded = new Uint8Array(paddedSize);
+}
+
+export const SECTION_SIZE = 16;
+
+/**
+ * Derives per-column surface height and block type from raw block data.
+ * Returns heightMap and surfaceTypes arrays of length `size × size`.
+ */
+export function computeHeightData(
+  blocks: Uint8Array,
+  size: number,
+): { heightMap: Uint8Array; surfaceTypes: Uint8Array } {
+  const heightMap = new Uint8Array(size * size);
+  const surfaceTypes = new Uint8Array(size * size);
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      const colIdx = z * size + x;
+      for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+        const bt = blocks[y * size * size + z * size + x]!;
+        if (bt !== CubeType.Air) {
+          heightMap[colIdx] = y;
+          surfaceTypes[colIdx] = bt;
+          break;
+        }
+      }
+    }
+  }
+  return { heightMap, surfaceTypes };
+}
+
+/**
+ * Updates surface height and type for a single column after a block change.
+ * `lx`, `lz` are local chunk coordinates; `wy` is the world Y of the changed block.
+ */
+export function updateColumnSurface(
+  blocks: Uint8Array,
+  heightMap: Uint8Array,
+  surfaceTypes: Uint8Array,
+  lx: number,
+  lz: number,
+  wy: number,
+  newBlockType: number,
+  size: number,
+): void {
+  const colIdx = lz * size + lx;
+  if (newBlockType === CubeType.Air && wy === heightMap[colIdx]) {
+    let newSurfY = 0;
+    for (let y = wy - 1; y >= 0; y--) {
+      if (blocks[y * size * size + lz * size + lx] !== CubeType.Air) {
+        newSurfY = y;
+        break;
+      }
+    }
+    heightMap[colIdx] = newSurfY;
+    surfaceTypes[colIdx] = blocks[newSurfY * size * size + lz * size + lx] ?? CubeType.Air;
+  } else if (newBlockType !== CubeType.Air && wy > (heightMap[colIdx] ?? 0)) {
+    heightMap[colIdx] = wy;
+    surfaceTypes[colIdx] = newBlockType;
+  }
+}
+
+export interface RenderBlockResult {
+  cubePositions: Float32Array;
+  cubeColors: Float32Array;
+  cubeAmbientOcclusion: Uint8Array;
+  numCubes: number;
+}
+
+/** Optional sub-region bounds within a chunk. Limits iteration to a 16x16x16 section. */
+export interface RenderRegion {
+  /** Local X start within the chunk (0-based). */
+  x: number;
+  /** Local Z start within the chunk (0-based). */
+  z: number;
+  /** Y start. */
+  y: number;
+  /** Region size along X/Z. */
+  sizeXZ: number;
+  /** Region size along Y. */
+  sizeY: number;
+}
+
+/**
+ * Builds render arrays (positions, colors, AO) from raw block and height data.
+ * Environment-agnostic — callable from both the worker and the main thread.
+ *
+ * Uses a padded (S+2)×(S+2)×(H+2) scratch array for branchless neighbor
+ * lookups — eliminates bounds checks and worldGet calls from the hot loop.
+ *
+ * When `region` is provided, only iterates blocks within that sub-region.
+ */
+export function renderBlockData(
+  blocks: Uint8Array,
+  heightMap: Uint8Array,
+  originX: number,
+  originZ: number,
+  size: number,
+  worldGet?: (wx: number, wy: number, wz: number) => CubeType,
+  region?: RenderRegion,
+): RenderBlockResult {
+  const topleftx = originX - size / 2;
+  const topleftz = originZ - size / 2;
+  const S = size;
+  const PX = S + 2;
+  const PZ = S + 2;
+  const PY = CHUNK_HEIGHT + 2;
+  const paddedSize = PX * PZ * PY;
+
+  // Iteration bounds
+  const x0 = region?.x ?? 0;
+  const z0 = region?.z ?? 0;
+  const y0 = region?.y ?? 0;
+  const x1 = region ? x0 + region.sizeXZ : S;
+  const z1 = region ? z0 + region.sizeXZ : S;
+  const y1 = region ? y0 + region.sizeY : CHUNK_HEIGHT;
+
+  const maxCubes = (x1 - x0) * (z1 - z0) * (y1 - y0);
+  ensureScratchCapacity(maxCubes, paddedSize);
+
+  // Build padded array: index = (ly+1) * PX*PZ + (lz+1) * PX + (lx+1)
+  // Default fill is 0 (Air) — borders are Air unless worldGet overrides.
+  const padded = scratchPadded;
+
+  // For region renders, only fill the sub-region ± 1-block border in the padded array.
+  // For full-chunk renders, fill the entire padded array.
+  const strideY = PX * PZ;
+  const strideZ = PX;
+
+  if (region) {
+    // Padded coords of the region ± 1 border (clamped to padded array bounds)
+    const py0 = Math.max(0, y0); // y-1 border: y0+1-1 = y0 in padded coords
+    const py1 = Math.min(PY - 1, y1 + 1); // y1+1 border in padded coords
+    const pz0 = Math.max(0, z0); // lz-1 border: pz = lz+1-1 = lz
+    const pz1 = Math.min(PZ - 1, z1 + 1);
+    const px0 = Math.max(0, x0);
+    const px1 = Math.min(PX - 1, x1 + 1);
+    // Zero only the needed rows
+    for (let py = py0; py <= py1; py++) {
+      for (let pz = pz0; pz <= pz1; pz++) {
+        const base = py * strideY + pz * strideZ + px0;
+        padded.fill(0, base, base + (px1 - px0 + 1));
+      }
+    }
+    // Copy interior blocks for the relevant rows only
+    const lyMin = Math.max(0, y0 - 1);
+    const lyMax = Math.min(CHUNK_HEIGHT - 1, y1);
+    const lzMin = Math.max(0, z0 - 1);
+    const lzMax = Math.min(S - 1, z1);
+    const lxMin = Math.max(0, x0 - 1);
+    const lxMax = Math.min(S - 1, x1);
+    for (let ly = lyMin; ly <= lyMax; ly++) {
+      for (let lz = lzMin; lz <= lzMax; lz++) {
+        const srcOff = ly * S * S + lz * S + lxMin;
+        const dstOff = (ly + 1) * strideY + (lz + 1) * strideZ + (lxMin + 1);
+        padded.set(blocks.subarray(srcOff, srcOff + (lxMax - lxMin + 1)), dstOff);
+      }
+    }
+    // Y=-1 border: mark as solid for columns in the region (prevents false "air" below bedrock floor)
+    if (y0 === 0) {
+      for (let lz = lzMin; lz <= lzMax; lz++) {
+        for (let lx = lxMin; lx <= lxMax; lx++) {
+          padded[(lz + 1) * strideZ + (lx + 1)] = CubeType.Bedrock;
+        }
+      }
+    }
+    // Fill X/Z borders from worldGet for the region's edges
+    if (worldGet) {
+      for (let ly = lyMin; ly <= lyMax; ly++) {
+        const py = ly + 1;
+        if (x0 === 0) {
+          for (let lz = lzMin; lz <= lzMax; lz++) {
+            padded[py * strideY + (lz + 1) * strideZ + 0] = worldGet(topleftx - 1, ly, topleftz + lz);
+          }
+        }
+        if (x1 === S) {
+          for (let lz = lzMin; lz <= lzMax; lz++) {
+            padded[py * strideY + (lz + 1) * strideZ + (S + 1)] = worldGet(topleftx + S, ly, topleftz + lz);
+          }
+        }
+        if (z0 === 0) {
+          for (let lx = lxMin; lx <= lxMax; lx++) {
+            padded[py * strideY + 0 * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz - 1);
+          }
+        }
+        if (z1 === S) {
+          for (let lx = lxMin; lx <= lxMax; lx++) {
+            padded[py * strideY + (S + 1) * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz + S);
+          }
+        }
+      }
+    }
+  } else {
+    padded.fill(0, 0, paddedSize);
+
+    // Copy all interior blocks
+    for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+      for (let lz = 0; lz < S; lz++) {
+        const srcOff = ly * S * S + lz * S;
+        const dstOff = (ly + 1) * strideY + (lz + 1) * strideZ + 1;
+        padded.set(blocks.subarray(srcOff, srcOff + S), dstOff);
+      }
+    }
+
+    // Fill Y=-1 border as solid (prevents false "air" below bedrock floor)
+    padded.fill(CubeType.Bedrock, 0, PX * PZ);
+
+    // Fill X/Z borders from worldGet if available
+    if (worldGet) {
+      for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+        const py = ly + 1;
+        // X borders (lx = -1 and lx = S)
+        for (let lz = 0; lz < S; lz++) {
+          padded[py * strideY + (lz + 1) * strideZ + 0] = worldGet(topleftx - 1, ly, topleftz + lz);
+          padded[py * strideY + (lz + 1) * strideZ + (S + 1)] = worldGet(topleftx + S, ly, topleftz + lz);
+        }
+        // Z borders (lz = -1 and lz = S)
+        for (let lx = 0; lx < S; lx++) {
+          padded[py * strideY + 0 * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz - 1);
+          padded[py * strideY + (S + 1) * strideZ + (lx + 1)] = worldGet(topleftx + lx, ly, topleftz + S);
+        }
+      }
+    }
+  }
+
+  const positions = scratchPositions;
+  const colors = scratchColors;
+  const ambientOcclusion = scratchAmbientOcclusion;
+  let count = 0;
+
+  for (let i = z0; i < z1; i++) {
+    const pBaseZ = (i + 1) * strideZ;
+    for (let j = x0; j < x1; j++) {
+      const surfY = region ? Math.min(heightMap[i * S + j] ?? 0, y1 - 1) : (heightMap[i * S + j] ?? 0);
+      if (surfY < y0) continue;
+      const wx = topleftx + j;
+      const wz = topleftz + i;
+      const pBaseXZ = pBaseZ + (j + 1);
+
+      for (let y = y0; y <= surfY; y++) {
+        const pi = (y + 1) * strideY + pBaseXZ;
+        const blockType = padded[pi]!;
+        if (blockType === CubeType.Air) continue;
+
+        // Face culling: skip blocks fully surrounded by solid blocks
+        if (
+          padded[pi + 1] !== CubeType.Air &&
+          padded[pi - 1] !== CubeType.Air &&
+          padded[pi + strideY] !== CubeType.Air &&
+          padded[pi - strideY] !== CubeType.Air &&
+          padded[pi + strideZ] !== CubeType.Air &&
+          padded[pi - strideZ] !== CubeType.Air
+        )
+          continue;
+
+        // Write instance data
+        const info = CUBE_TYPE_INFO[blockType as CubeType];
+        const c = info.baseColor;
+        positions[4 * count] = wx;
+        positions[4 * count + 1] = y;
+        positions[4 * count + 2] = wz;
+        positions[4 * count + 3] = blockType;
+        colors[3 * count] = c[0];
+        colors[3 * count + 1] = c[1];
+        colors[3 * count + 2] = c[2];
+
+        // AO: 6 faces × 4 corners — all via padded array with pre-computed offsets
+        let aoOffset = 24 * count;
+        for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
+          const nOff = face.normal[0] + face.normal[1] * strideY + face.normal[2] * strideZ;
+          for (const [sideA, sideB] of face.corners) {
+            const aOff = sideA[0] + sideA[1] * strideY + sideA[2] * strideZ;
+            const bOff = sideB[0] + sideB[1] * strideY + sideB[2] * strideZ;
+            const s1 = padded[pi + nOff + aOff] !== CubeType.Air;
+            const s2 = padded[pi + nOff + bOff] !== CubeType.Air;
+            const cn = padded[pi + nOff + aOff + bOff] !== CubeType.Air;
+            ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(s1, s2, cn);
+          }
+        }
+        count++;
+      }
+    }
+  }
+
+  return {
+    cubePositions: positions.slice(0, 4 * count),
+    cubeColors: colors.slice(0, 3 * count),
+    cubeAmbientOcclusion: ambientOcclusion.slice(0, 24 * count),
+    numCubes: count,
+  };
+}
+
+/** Computes the section index for a block at local coordinates (lx, ly, lz). */
+export function sectionIndex(lx: number, ly: number, lz: number): number {
+  return (lx >> 4) + ((lz >> 4) << 2) + ((ly >> 4) << 4);
+}
+
+/** Returns the RenderRegion for a given section index. */
+export function sectionRegion(idx: number): RenderRegion {
+  const sx = idx & 3;
+  const sz = (idx >> 2) & 3;
+  const sy = idx >> 4;
+  return {
+    x: sx * SECTION_SIZE,
+    z: sz * SECTION_SIZE,
+    y: sy * SECTION_SIZE,
+    sizeXZ: SECTION_SIZE,
+    sizeY: SECTION_SIZE,
+  };
+}
+
+/** Total number of sections in a chunk (4x4x8 = 128). */
+export const SECTIONS_PER_CHUNK =
+  (CHUNK_SIZE / SECTION_SIZE) * (CHUNK_SIZE / SECTION_SIZE) * (CHUNK_HEIGHT / SECTION_SIZE);
+
+/**
+ * Column-major RLE encoding for chunk block data. Iterates each (x,z) column
+ * along the Y axis, emitting (blockType, runLength) pairs. Typical chunks
+ * compress from 512 KB to ~40-50 KB.
+ */
+export function rleEncodeBlocks(blocks: Uint8Array, size: number): Uint8Array {
+  const maxPairs = size * size * CHUNK_HEIGHT; // absolute worst case
+  const buf = new Uint8Array(maxPairs * 2);
+  let writeIdx = 0;
+
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      let runType = blocks[0 * size * size + z * size + x]!;
+      let runLen = 1;
+
+      for (let y = 1; y < CHUNK_HEIGHT; y++) {
+        const bt = blocks[y * size * size + z * size + x]!;
+        if (bt === runType && runLen < 255) {
+          runLen++;
+        } else {
+          buf[writeIdx++] = runType;
+          buf[writeIdx++] = runLen;
+          runType = bt;
+          runLen = 1;
+        }
+      }
+      buf[writeIdx++] = runType;
+      buf[writeIdx++] = runLen;
+    }
+  }
+
+  return buf.slice(0, writeIdx);
+}
+
+/**
+ * Decodes column-major RLE data back into a flat blocks array.
+ * Returns the blocks Uint8Array (size × size × CHUNK_HEIGHT).
+ */
+export function rleDecodeBlocks(encoded: Uint8Array, size: number): Uint8Array {
+  const blocks = new Uint8Array(size * size * CHUNK_HEIGHT);
+  let readIdx = 0;
+
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      let y = 0;
+      while (y < CHUNK_HEIGHT) {
+        if (readIdx + 1 >= encoded.length) {
+          throw new Error(
+            `rleDecodeBlocks: unexpected end of encoded data at readIdx=${readIdx} (column x=${x}, z=${z}, y=${y})`,
+          );
+        }
+        const blockType = encoded[readIdx++]!;
+        const runLen = encoded[readIdx++]!;
+        if (runLen === 0) {
+          throw new Error(`rleDecodeBlocks: zero-length run at readIdx=${readIdx - 1} (column x=${x}, z=${z}, y=${y})`);
+        }
+        if (y + runLen > CHUNK_HEIGHT) {
+          throw new Error(
+            `rleDecodeBlocks: run of length ${runLen} at y=${y} exceeds CHUNK_HEIGHT=${CHUNK_HEIGHT} (column x=${x}, z=${z})`,
+          );
+        }
+        for (let i = 0; i < runLen; i++) {
+          blocks[y * size * size + z * size + x] = blockType;
+          y++;
+        }
+      }
+    }
+  }
+
+  return blocks;
 }
 
 export class Chunk {
@@ -141,7 +528,6 @@ export class Chunk {
   private cubePositionsF32: Float32Array = new Float32Array(0);
   private cubeColorsF32: Float32Array = new Float32Array(0);
   private cubeAmbientOcclusionU8: Uint8Array = new Uint8Array(0);
-  private maxCubes: number = 0;
 
   // Packed (y<<16)|(z<<8)|x positions of fluid blocks that may still flow on
   // the next tick. A Set gives O(1) add/remove and natural de-duplication —
@@ -154,53 +540,141 @@ export class Chunk {
   // adjacent cell opens up later (e.g. via mining).
   private activeFluids: Set<number> = new Set();
 
-  constructor(centerX: number, centerY: number, size: number, seed: number) {
+  // Highest Y at which this chunk has ever held a fluid cell (-1 = never).
+  // Conservative upper bound: not decremented on decay/harden, so it stays
+  // useful even after fluids retreat. Used to cap boundary-priming scans.
+  private maxFluidY_: number = -1;
+
+  constructor(
+    centerX: number,
+    centerY: number,
+    size: number,
+    seed: number,
+    skipRender = false,
+    prefilled?: { blocks: Uint8Array; fluidLevels?: Uint8Array },
+  ) {
     this.x = centerX;
     this.y = centerY;
     this.size = size;
     this.seed = seed;
 
-    this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
     this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-    this.fluidLevels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
 
-    this.generateCubes();
+    if (prefilled) {
+      this.blocks = prefilled.blocks;
+      this.fluidLevels = prefilled.fluidLevels ?? new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
+      this.buildHeightMap();
+    } else {
+      this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
+      this.fluidLevels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
+      this.generateCubes();
+    }
+
     this.seedActiveFluids();
-    this.computeMaxCubes();
-    this.renderChunk(); // render on creation, might not be necessary
+    if (!skipRender && !prefilled) this.renderChunk();
+  }
+
+  /** Returns the number of fluid cells queued for the next tick. */
+  public get activeFluidCount(): number {
+    return this.activeFluids.size;
+  }
+
+  /** Upper-bound Y of any fluid ever placed in this chunk (-1 if none). */
+  public get maxFluidY(): number {
+    return this.maxFluidY_;
   }
 
   /**
-   * Collects every fluid voxel placed during terrain generation into the
-   * active-fluid queue. Generated fluids are all sources (level 0), so no
-   * level initialisation is required — the zero-default on `fluidLevels` is
-   * already correct.
+   * Rebuilds heightMap/surfaceTypesMap from the current `blocks` array. Used
+   * when hydrating a Chunk from persisted data instead of terrain generation.
+   */
+  private buildHeightMap(): void {
+    const S = this.size;
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const hmIdx = z * CHUNK_SIZE + x;
+        let topY = -1;
+        let topType: CubeType = CubeType.Air;
+        for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+          const t = this.blocks[y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x] as CubeType;
+          if (t !== CubeType.Air) {
+            topY = y;
+            topType = t;
+            break;
+          }
+        }
+        this.heightMap[hmIdx] = topY < 0 ? 0 : topY;
+        this.surfaceTypesMap[hmIdx] = topType;
+      }
+    }
+  }
+
+  /**
+   * Collects fluid voxels that could still act (have an adjacent air cell,
+   * opposing fluid, or sit on a chunk boundary where spillover may reach a
+   * neighbour chunk) into the active-fluid queue. Interior sources that are
+   * fully surrounded by same-fluid are left out; they get re-woken by
+   * `activateCellIfFluid` / `activateFluidNeighbours` whenever an adjacent
+   * cell changes. Generated fluids are all sources (level 0).
    */
   private seedActiveFluids(): void {
     const S = this.size;
-    // blocks is stored on a CHUNK_SIZE × CHUNK_SIZE grid regardless of `size`;
-    // the S parameter only bounds which voxels are populated.
+    let maxY = -1;
     for (let y = 0; y < CHUNK_HEIGHT; y++) {
       for (let z = 0; z < S; z++) {
         const zOffset = y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE;
         for (let x = 0; x < S; x++) {
           const t = this.blocks[zOffset + x];
-          if (t === CubeType.Water || t === CubeType.Lava) {
+          if (t !== CubeType.Water && t !== CubeType.Lava) continue;
+          if (y > maxY) maxY = y;
+          if (this.canFluidAct(x, y, z, t as CubeType.Water | CubeType.Lava)) {
             this.activeFluids.add(packPos(x, y, z));
           }
         }
       }
     }
+    this.maxFluidY_ = maxY;
   }
 
-  private computeMaxCubes(): void {
-    let total = 0;
+  /**
+   * True iff a fluid at (lx, ly, lz) has at least one in-chunk neighbour
+   * (below, ±X, ±Z) it could plausibly act on next tick — an Air or
+   * opposing-fluid cell. Used to cull stable interior sources from
+   * `activeFluids` so per-tick iteration is proportional to the fluid
+   * *surface*, not volume. Cells on the chunk boundary whose in-chunk
+   * neighbours are all unreactive still return false; the cross-chunk
+   * neighbour is handled out-of-band by `primeAgainstNeighbor` (called
+   * when a neighbour chunk loads) and `chunk-storage.activateFluidNeighbours`
+   * (called on block breaks).
+   */
+  private canFluidAct(lx: number, ly: number, lz: number, type: CubeType.Water | CubeType.Lava): boolean {
     const S = this.size;
-    for (let i = 0; i < S * S; i++) {
-      total += this.heightMap[i]! + 1;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const rowStride = CHUNK_SIZE;
+    const opp = opposingFluid(type);
+    if (ly > 0) {
+      const b = this.blocks[(ly - 1) * stride + lz * rowStride + lx];
+      if (b === CubeType.Air || b === opp) return true;
     }
-    this.maxCubes = total;
+    const py = ly * stride;
+    if (lx + 1 < S) {
+      const bE = this.blocks[py + lz * rowStride + lx + 1];
+      if (bE === CubeType.Air || bE === opp) return true;
+    }
+    if (lx > 0) {
+      const bW = this.blocks[py + lz * rowStride + lx - 1];
+      if (bW === CubeType.Air || bW === opp) return true;
+    }
+    if (lz + 1 < S) {
+      const bN = this.blocks[py + (lz + 1) * rowStride + lx];
+      if (bN === CubeType.Air || bN === opp) return true;
+    }
+    if (lz > 0) {
+      const bS = this.blocks[py + (lz - 1) * rowStride + lx];
+      if (bS === CubeType.Air || bS === opp) return true;
+    }
+    return false;
   }
 
   public getBlock(lx: number, ly: number, lz: number): CubeType {
@@ -494,6 +968,7 @@ export class Chunk {
     this.blocks[idx] = type;
     this.fluidLevels[idx] = level;
     this.activeFluids.add(packPos(lx, ly, lz));
+    if (ly > this.maxFluidY_) this.maxFluidY_ = ly;
     const hmIdx = lz * CHUNK_SIZE + lx;
     if (ly > this.heightMap[hmIdx]!) {
       this.heightMap[hmIdx] = ly;
@@ -526,6 +1001,7 @@ export class Chunk {
       this.blocks[idx] = type;
       this.fluidLevels[idx] = level;
       this.activeFluids.add(packPos(lx, ly, lz));
+      if (ly > this.maxFluidY_) this.maxFluidY_ = ly;
       const hmIdx = lz * CHUNK_SIZE + lx;
       if (ly > this.heightMap[hmIdx]!) {
         this.heightMap[hmIdx] = ly;
@@ -580,6 +1056,64 @@ export class Chunk {
     this.heightMap[hmIdx] = -1;
     this.surfaceTypesMap[hmIdx] = CubeType.Air;
   }
+  /**
+   * Scans the face of this chunk adjacent to `neighbor` (specified by a
+   * unit step `(dx, dz)` from `this` to `neighbor` in world space) and
+   * activates any fluid cell whose cross-chunk neighbour in `neighbor`
+   * is Air or opposing fluid — i.e. cells that could flow out on the
+   * next tick. Called by `ChunkStorage` after a chunk is loaded so
+   * boundary sources that weren't seeded by local `canFluidAct` get
+   * woken once the adjacent chunk is present.
+   */
+  public primeAgainstNeighbor(neighbor: Chunk, dx: number, dz: number): void {
+    const maxY = Math.min(CHUNK_HEIGHT - 1, Math.max(this.maxFluidY_, neighbor.maxFluidY_));
+    if (maxY < 0) return;
+    const S = this.size;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const rowStride = CHUNK_SIZE;
+
+    if (dx !== 0) {
+      const thisLx = dx === 1 ? S - 1 : 0;
+      const otherLx = dx === 1 ? 0 : S - 1;
+      for (let y = 0; y <= maxY; y++) {
+        const rowBase = y * stride;
+        for (let z = 0; z < S; z++) {
+          const t = this.blocks[rowBase + z * rowStride + thisLx];
+          if (t !== CubeType.Water && t !== CubeType.Lava) continue;
+          const o = neighbor.blocks[rowBase + z * rowStride + otherLx];
+          const opp = t === CubeType.Water ? CubeType.Lava : CubeType.Water;
+          if (o === CubeType.Air || o === opp) {
+            this.activeFluids.add(packPos(thisLx, y, z));
+          }
+        }
+      }
+    } else {
+      const thisLz = dz === 1 ? S - 1 : 0;
+      const otherLz = dz === 1 ? 0 : S - 1;
+      for (let y = 0; y <= maxY; y++) {
+        const rowBase = y * stride;
+        for (let x = 0; x < S; x++) {
+          const t = this.blocks[rowBase + thisLz * rowStride + x];
+          if (t !== CubeType.Water && t !== CubeType.Lava) continue;
+          const o = neighbor.blocks[rowBase + otherLz * rowStride + x];
+          const opp = t === CubeType.Water ? CubeType.Lava : CubeType.Water;
+          if (o === CubeType.Air || o === opp) {
+            this.activeFluids.add(packPos(x, y, thisLz));
+          }
+        }
+      }
+    }
+  }
+
+  /** Adds (lx, ly, lz) to the active-fluids queue if it contains Water/Lava. No-op otherwise. */
+  public activateCellIfFluid(lx: number, ly: number, lz: number): void {
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_HEIGHT) return;
+    const t = this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx];
+    if (t === CubeType.Water || t === CubeType.Lava) {
+      this.activeFluids.add(packPos(lx, ly, lz));
+    }
+  }
+
   private activateFluidNeighbours(lx: number, ly: number, lz: number): void {
     const candidates: readonly [number, number, number][] = [
       [lx + 1, ly, lz],
@@ -656,7 +1190,9 @@ export class Chunk {
    * Returns true iff any block changed.
    */
   public tickFluids(
-    spillover?: (wx: number, wy: number, wz: number, type: CubeType.Water | CubeType.Lava, level: number) => void,
+    spillover?: (wx: number, wy: number, wz: number, type: CubeType.Water | CubeType.Lava, level: number) => boolean,
+    onChange?: (wx: number, wy: number, wz: number, blockType: CubeType) => void,
+    tickLava = true,
   ): boolean {
     if (this.activeFluids.size === 0) return false;
     const S = this.size;
@@ -664,6 +1200,12 @@ export class Chunk {
     const rowStride = CHUNK_SIZE;
     const topleftx = this.x - this.size / 2;
     const topleftz = this.y - this.size / 2;
+    const emit = onChange
+      ? (lx: number, ly: number, lz: number) => {
+          const bt = this.blocks[ly * stride + lz * rowStride + lx] as CubeType;
+          onChange(topleftx + lx, ly, topleftz + lz, bt);
+        }
+      : undefined;
 
     const current = this.activeFluids;
     const nextActive: Set<number> = new Set();
@@ -692,7 +1234,14 @@ export class Chunk {
       const idx = y * stride + z * rowStride + x;
       const type = this.blocks[idx] as CubeType;
       if (type !== CubeType.Water && type !== CubeType.Lava) continue; // stale entry (removed since last tick)
+      if (!tickLava && type === CubeType.Lava) {
+        // Lava runs on a slower cadence than water; keep the cell active so it
+        // processes on the next lava tick.
+        nextActive.add(pos);
+        continue;
+      }
       const level = this.fluidLevels[idx]!;
+      const opp = type === CubeType.Water ? CubeType.Lava : CubeType.Water;
 
       if (level !== FLUID_SOURCE_LEVEL && !this.isFluidSupported(x, y, z, type, level)) {
         decayX.push(x);
@@ -711,12 +1260,13 @@ export class Chunk {
           changeType.push(type);
           changeLevel.push(1);
           flowedDown = true;
-        } else if (this.blocks[belowIdx] === opposingFluid(type)) {
+        } else if (this.blocks[belowIdx] === opp) {
           // Falling onto the opposite fluid hardens it directly; the flow
           // stops as if it had hit solid ground.
           this.blocks[belowIdx] = CubeType.Stone;
           this.fluidLevels[belowIdx] = 0;
           this.activateFluidNeighbours(x, y - 1, z);
+          emit?.(x, y - 1, z);
           anyChange = true;
         }
       }
@@ -729,9 +1279,8 @@ export class Chunk {
           const nx = x + dx;
           const nz = z + dz;
           if (nx < 0 || nx >= S || nz < 0 || nz >= S) {
-            if (spillover) {
-              spillover(topleftx + nx, y, topleftz + nz, type, nextLevel);
-              spreadLaterally = true; // we tried; cross-chunk result is authoritative there
+            if (spillover?.(topleftx + nx, y, topleftz + nz, type, nextLevel)) {
+              spreadLaterally = true;
             }
             continue;
           }
@@ -744,21 +1293,21 @@ export class Chunk {
             changeType.push(type);
             changeLevel.push(nextLevel);
             spreadLaterally = true;
-          } else if (nType === opposingFluid(type)) {
+          } else if (nType === opp) {
             this.blocks[nIdx] = CubeType.Stone;
             this.fluidLevels[nIdx] = 0;
             this.activateFluidNeighbours(nx, y, nz);
+            emit?.(nx, y, nz);
             anyChange = true;
           }
         }
       }
 
-      // Keep anything that might still be interesting next tick:
-      //   - sources (can always re-spawn flows if neighbours open up)
-      //   - cells that did something this tick
-      // Stable flowing cells drop off; they are re-woken by
-      // `activateFluidNeighbours` when a neighbouring cell changes.
-      if (level === FLUID_SOURCE_LEVEL || flowedDown || spreadLaterally) {
+      // Fully-surrounded sources drop out; re-woken by `activateCellIfFluid`
+      // / `activateFluidNeighbours` on any neighbouring cell change.
+      if (flowedDown || spreadLaterally) {
+        nextActive.add(pos);
+      } else if (level === FLUID_SOURCE_LEVEL && this.canFluidAct(x, y, z, type)) {
         nextActive.add(pos);
       }
     }
@@ -777,6 +1326,7 @@ export class Chunk {
       this.blocks[idx] = CubeType.Air;
       this.fluidLevels[idx] = 0;
       this.activateFluidNeighbours(x, y, z);
+      emit?.(x, y, z);
       anyChange = true;
     }
 
@@ -785,102 +1335,21 @@ export class Chunk {
       const x = changeX[n]!;
       const y = changeY[n]!;
       const z = changeZ[n]!;
-      if (this.applyFluidFlow(x, y, z, changeType[n]!, changeLevel[n]!)) anyChange = true;
+      if (this.applyFluidFlow(x, y, z, changeType[n]!, changeLevel[n]!)) {
+        emit?.(x, y, z);
+        anyChange = true;
+      }
     }
 
     return anyChange;
   }
 
-  // worldGet: optional cross-chunk block lookup for accurate edge culling.
-  // Without it, chunk-boundary faces are always treated as exposed (safe but over-renders).
   public renderChunk(worldGet?: (wx: number, wy: number, wz: number) => CubeType): void {
-    // The fluid simulator can push heightMap above the value cached by
-    // computeMaxCubes(), which would otherwise overflow the scratch buffers.
-    this.computeMaxCubes();
-
-    const topleftx = this.x - this.size / 2;
-    const topleftz = this.y - this.size / 2;
-    const S = this.size;
-    const hm = this.heightMap;
-
-    // Cross-chunk aware air check for edge culling
-    const isAir = (nlx: number, nly: number, nlz: number): boolean => {
-      if (nly < 0) return false;
-      if (nlx >= 0 && nlx < S && nlz >= 0 && nlz < S) {
-        return this.getBlock(nlx, nly, nlz) === CubeType.Air;
-      }
-      if (worldGet) {
-        return worldGet(topleftx + nlx, nly, topleftz + nlz) === CubeType.Air;
-      }
-      return true; // no neighbor data — treat edge as exposed
-    };
-
-    const touchesAir = (lx: number, ly: number, lz: number): boolean =>
-      isAir(lx + 1, ly, lz) ||
-      isAir(lx - 1, ly, lz) ||
-      isAir(lx, ly + 1, lz) ||
-      isAir(lx, ly - 1, lz) ||
-      isAir(lx, ly, lz + 1) ||
-      isAir(lx, ly, lz - 1);
-
-    ensureScratchCapacity(this.maxCubes);
-    const positions = scratchPositions;
-    const colors = scratchColors;
-    const ambientOcclusion = scratchAmbientOcclusion;
-    let count = 0;
-
-    const isSolid = (nlx: number, nly: number, nlz: number): boolean => !isAir(nlx, nly, nlz);
-
-    const writeCube = (blockType: CubeType, lx: number, y: number, lz: number, wx: number, wz: number): void => {
-      const info = CUBE_TYPE_INFO[blockType];
-      const c = info.baseColor;
-
-      positions[4 * count] = wx;
-      positions[4 * count + 1] = y;
-      positions[4 * count + 2] = wz;
-      positions[4 * count + 3] = blockType;
-
-      colors[3 * count] = c[0];
-      colors[3 * count + 1] = c[1];
-      colors[3 * count + 2] = c[2];
-
-      let aoOffset = 24 * count;
-      for (const face of FACE_AMBIENT_OCCLUSION_SPECS) {
-        const n = face.normal;
-        for (const [sideA, sideB] of face.corners) {
-          const side1 = isSolid(lx + n[0] + sideA[0], y + n[1] + sideA[1], lz + n[2] + sideA[2]);
-          const side2 = isSolid(lx + n[0] + sideB[0], y + n[1] + sideB[1], lz + n[2] + sideB[2]);
-          const corner = isSolid(
-            lx + n[0] + sideA[0] + sideB[0],
-            y + n[1] + sideA[1] + sideB[1],
-            lz + n[2] + sideA[2] + sideB[2],
-          );
-          ambientOcclusion[aoOffset++] = vertexAmbientOcclusion(side1, side2, corner);
-        }
-      }
-
-      count++;
-    };
-
-    for (let i = 0; i < S; i++) {
-      for (let j = 0; j < S; j++) {
-        const idx = i * S + j;
-        const surfY = hm[idx]!;
-        const wx = topleftx + j;
-        const wz = topleftz + i;
-
-        for (let y = 0; y <= surfY; y++) {
-          const blockType = this.getBlock(j, y, i);
-          if (blockType === CubeType.Air || !touchesAir(j, y, i)) continue;
-          writeCube(blockType, j, y, i, wx, wz);
-        }
-      }
-    }
-
-    this.cubes = count;
-    this.cubePositionsF32 = positions.slice(0, 4 * count);
-    this.cubeColorsF32 = colors.slice(0, 3 * count);
-    this.cubeAmbientOcclusionU8 = ambientOcclusion.slice(0, 24 * count);
+    const result = renderBlockData(this.blocks, this.heightMap, this.x, this.y, this.size, worldGet);
+    this.cubes = result.numCubes;
+    this.cubePositionsF32 = result.cubePositions;
+    this.cubeColorsF32 = result.cubeColors;
+    this.cubeAmbientOcclusionU8 = result.cubeAmbientOcclusion;
   }
 
   /** Returns the flat `Float32Array` of cube positions `[x, y, z, 0]` per cube. */
