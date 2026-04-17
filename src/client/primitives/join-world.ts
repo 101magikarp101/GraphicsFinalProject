@@ -3,8 +3,8 @@ import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
 import { createInventoryUiState } from "@/game/crafting";
-import { Player, type PlayerPublicState } from "@/game/player";
-import type { RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
+import { Player, type PlayerPublicState, type PlayerState } from "@/game/player";
+import type { ChunkDataPacket, RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
 import { createSoundEffects } from "./sounds";
 
 /** Reactive server-side diagnostics derived from every tick. */
@@ -36,7 +36,7 @@ export function joinWorld(roomId: string) {
 
   const blockAckQueue: Array<{ seq: number; accepted: boolean }> = [];
   const blockChangesQueue: Array<{ x: number; y: number; z: number; blockType: number }> = [];
-  const chunkDataQueue: Array<Array<{ originX: number; originZ: number; blocks: Uint8Array }>> = [];
+  const chunkDataQueue: Array<ChunkDataPacket["chunks"]> = [];
 
   const [snapCount, setSnapCount] = createSignal(0);
   const [session, setSession] = createSignal<RoomSessionApi>();
@@ -66,7 +66,7 @@ export function joinWorld(roomId: string) {
         if (!current) {
           setPlayer(new Player(packet.state));
         } else {
-          replicated()?.initialize(packet.state);
+          applyAuthoritativePlayerState(current, packet.state, true);
         }
         return;
       }
@@ -75,10 +75,7 @@ export function joinWorld(roomId: string) {
         if (!current) {
           setPlayer(new Player(packet.state));
         } else {
-          const previousHealth = current.state.health;
-          const { x, y, z, yaw, pitch, ...rest } = packet.state;
-          Object.assign(current.state, rest);
-          if (packet.state.health < previousHealth) sounds.playPlayerHit();
+          applyAuthoritativePlayerState(current, packet.state, false);
         }
         return;
       }
@@ -99,6 +96,17 @@ export function joinWorld(roomId: string) {
         chunkDataQueue.push(packet.chunks);
         return;
     }
+  }
+
+  function applyAuthoritativePlayerState(current: Player, nextState: PlayerState, includeTransform: boolean) {
+    const previousHealth = current.state.health;
+    if (includeTransform) {
+      replicated()?.initialize(nextState);
+    } else {
+      const { x, y, z, yaw, pitch, ...rest } = nextState;
+      Object.assign(current.state, rest);
+    }
+    if (nextState.health < previousHealth) sounds.playPlayerHit();
   }
 
   onCleanup(() => {

@@ -1,10 +1,12 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { makeTimer } from "@solid-primitives/timer";
 import { Vec3 } from "gl-matrix";
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE } from "@/game/chunk";
+import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
+import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
@@ -13,7 +15,17 @@ import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
-import { createEntityPipeline, type EntityDrawData, playerPassDef, playerPipelineConfig } from "./entities";
+import {
+  createEntityPipeline,
+  type EntityDrawData,
+  type GpuBuffers,
+  packPlacedObjects,
+  packPlacedRocks,
+  placedObjectPassDef,
+  placedRockPassDef,
+  playerPassDef,
+  playerPipelineConfig,
+} from "./entities";
 import { createInput, type InputOptions } from "./input";
 import type { RaycastHit } from "./raycast";
 import { raycastVoxels } from "./raycast";
@@ -22,7 +34,6 @@ import { createRenderLoop } from "./render-loop";
 import { SceneLighting } from "./scene-lighting";
 
 export interface CreateGameArgs {
-  /** WebGL rendering canvas (resolved lazily via accessor). */
   glCanvas: () => HTMLCanvasElement | undefined;
   /** Output of `joinWorld()` — provides player, remote players, tick info, input, etc. */
   room: ReturnType<typeof joinWorld>;
@@ -98,7 +109,7 @@ const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef]);
+  const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef, placedRockPassDef]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -142,6 +153,10 @@ export function createGame(args: CreateGameArgs): GameState {
     setTerrainVersion((version) => version + 1),
   );
   const lighting = new SceneLighting();
+  onCleanup(() => {
+    chunks.dispose();
+  });
+
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
@@ -149,11 +164,18 @@ export function createGame(args: CreateGameArgs): GameState {
   const computeHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const gpuHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
+  const placedObjectBuffers: GpuBuffers = {};
+  const placedRockBuffers: GpuBuffers = {};
   let frame = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
   let lastPacketCount = 0;
   let timeOffsetS = 0;
+  let lastPlacedObjects = chunks.getVisiblePlacedObjects();
+  let lastRenderCenterX = NaN;
+  let lastRenderCenterZ = NaN;
+  let renderedFoliageCount = 0;
+  let renderedRockCount = 0;
   let lastRenderDistance = args.preferences.renderDistance();
   // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
@@ -257,9 +279,9 @@ export function createGame(args: CreateGameArgs): GameState {
   // deduplicates by position delta and rate-limits faster-than-25ms packets.
   makeTimer(
     () => {
-      const s = room().session();
-      if (!pendingPacket || !s) return;
-      s.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
+      const session = room().session();
+      if (!pendingPacket || !session) return;
+      session.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
       packetCount++;
     },
     INPUT_SEND_INTERVAL_MS,
@@ -344,6 +366,30 @@ export function createGame(args: CreateGameArgs): GameState {
     const projMatrix = camera.projMatrix();
     chunks.cull(viewMatrix, projMatrix);
 
+    const placedObjects = chunks.getVisiblePlacedObjects();
+    const movedForObjectRepack =
+      Number.isNaN(lastRenderCenterX) ||
+      Math.abs(player.position.x - lastRenderCenterX) >= 4 ||
+      Math.abs(player.position.z - lastRenderCenterZ) >= 4;
+    if (placedObjects !== lastPlacedObjects || movedForObjectRepack) {
+      const renderablePlacedObjects = filterRenderablePlacedObjects(
+        placedObjects,
+        player.position.x,
+        player.position.z,
+      );
+      const foliageObjects = renderablePlacedObjects.filter(
+        (object) =>
+          object.type !== PlacedObjectType.Rock &&
+          (RENDERABLE_PLACED_OBJECT_TYPES as readonly PlacedObjectType[]).includes(object.type),
+      );
+      const rockObjects = renderablePlacedObjects.filter((object) => object.type === PlacedObjectType.Rock);
+      renderedFoliageCount = packPlacedObjects(foliageObjects, placedObjectBuffers);
+      renderedRockCount = packPlacedRocks(rockObjects, placedRockBuffers);
+      lastPlacedObjects = placedObjects;
+      lastRenderCenterX = player.position.x;
+      lastRenderCenterZ = player.position.z;
+    }
+
     // --- Remote entities + block acks ---
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
@@ -383,7 +429,11 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
-    const entities: EntityDrawData[] = [{ key: "players", buffers, count }];
+    const entities: EntityDrawData[] = [
+      { key: "players", buffers, count },
+      { key: "placed-objects", buffers: placedObjectBuffers, count: renderedFoliageCount },
+      { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
+    ];
     renderer.render({
       viewMatrix,
       projMatrix,

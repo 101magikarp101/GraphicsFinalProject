@@ -15,7 +15,6 @@ interface OnlinePlayer {
   name: string;
 }
 
-// TODO: reorganize these props
 interface DiagnosticsPanelProps {
   playerState: PlayerState;
   fps: number;

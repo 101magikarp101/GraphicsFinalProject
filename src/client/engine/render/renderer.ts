@@ -221,7 +221,7 @@ export class Renderer {
     pass.setup();
   }
 
-  // LUT data — indexed by CubeType (0–14), must stay in sync with blankCube.frag
+  // LUT data — indexed by CubeType (0–19), must stay in sync with blankCube.frag
   // col1 = mix(vertexColor, lut1Fixed, lut1Blend)
   // col2 = mix(vertexColor * lut2Scale, lut2Fixed, lut2Blend)
   // Entries for Water (12), Lava (13), and Permafrost (14) are dummies:
@@ -267,12 +267,27 @@ export class Renderer {
     0.0,
     0.0,
     0.0, // 12 Water
-    1.0,
+    0.0,
+    0.0,
+    1.0, // 13 Lava
     0.7,
-    0.1, // 13 Lava
-    0.0,
-    0.0,
+    0.1,
     0.0, // 14 Permafrost  (overridden by face logic)
+    0.0,
+    0.0,
+    0.0, // 15 OakLog
+    0.0,
+    0.0,
+    0.0, // 16 OakLeaf
+    0.0,
+    0.0,
+    0.0, // 17 ShrubLeaf
+    0.0,
+    0.0,
+    0.0, // 18 ShrubStem
+    0.0,
+    0.0,
+    0.0, // 19 Cactus
   ]);
   private static readonly LUT1_BLEND = new Float32Array([
     0, // Air
@@ -290,6 +305,11 @@ export class Renderer {
     0, // Water
     0.3, // Lava
     0, // Permafrost
+    0, // OakLog
+    0, // OakLeaf
+    0, // ShrubLeaf
+    0, // ShrubStem
+    0, // Cactus
   ]);
   private static readonly LUT2_FIXED = new Float32Array([
     0.0,
@@ -337,6 +357,21 @@ export class Renderer {
     0.0,
     0.0,
     0.0, // 14 Permafrost  (overridden by face logic)
+    0.28,
+    0.16,
+    0.07, // 15 OakLog      (dark bark)
+    0.1,
+    0.3,
+    0.05, // 16 OakLeaf     (dark leaf)
+    0.22,
+    0.34,
+    0.08, // 17 ShrubLeaf   (dark shrub leaf)
+    0.2,
+    0.14,
+    0.06, // 18 ShrubStem   (dark stem)
+    0.04,
+    0.28,
+    0.07, // 19 Cactus      (dark cactus)
   ]);
   private static readonly LUT2_BLEND = new Float32Array([
     0, // Air
@@ -354,6 +389,11 @@ export class Renderer {
     0, // Water
     0.6, // Lava
     0, // Permafrost
+    0.35, // OakLog
+    0.3, // OakLeaf
+    0.3, // ShrubLeaf
+    0.3, // ShrubStem
+    0.3, // Cactus
   ]);
   private static readonly LUT2_SCALE = new Float32Array([
     0.5, // Air
@@ -369,8 +409,13 @@ export class Renderer {
     0.5, // GoldOre     (irrelevant, blend=1)
     0.5, // DiamondOre  (irrelevant, blend=1)
     0.7, // Water
-    0.5, // Lava        (irrelevant, blend=0.6)
-    0.5, // Permafrost  (overridden by face logic)
+    0.5, // Lava
+    0.5, // Permafrost
+    0.55, // OakLog
+    0.6, // OakLeaf
+    0.6, // ShrubLeaf
+    0.55, // ShrubStem
+    0.6, // Cactus
   ]);
 
   private initBlankCubePass(cube: Cube): void {

@@ -112,6 +112,66 @@ describe("Chunk", () => {
     }
   });
 
+  it("generates block-based vegetation without clipping past chunk bounds", () => {
+    const chunk = new Chunk(128, -128, 64, 12345);
+    let vegetationBlocks = 0;
+
+    for (let z = 0; z < 64; z++) {
+      for (let x = 0; x < 64; x++) {
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+          const block = chunk.getBlock(x, y, z);
+          if (
+            block === CubeType.OakLog ||
+            block === CubeType.OakLeaf ||
+            block === CubeType.ShrubLeaf ||
+            block === CubeType.ShrubStem
+          ) {
+            vegetationBlocks++;
+          }
+        }
+      }
+    }
+
+    expect(vegetationBlocks).toBeGreaterThan(0);
+  });
+
+  it("renders vegetation blocks that rise above the terrain surface", () => {
+    const chunk = new Chunk(32, 32, 64, 123);
+    const renderedPositions = new Set<string>();
+
+    const positions = chunk.cubePositions();
+    for (let i = 0; i < chunk.numCubes(); i++) {
+      renderedPositions.add(`${positions[4 * i]},${positions[4 * i + 1]},${positions[4 * i + 2]}`);
+    }
+
+    let foundRenderedVegetation = false;
+    const originX = 32 - 32;
+    const originZ = 32 - 32;
+    outer: for (let z = 0; z < 64; z++) {
+      for (let x = 0; x < 64; x++) {
+        for (let y = 1; y < CHUNK_HEIGHT; y++) {
+          const block = chunk.getBlock(x, y, z);
+          if (
+            block !== CubeType.OakLog &&
+            block !== CubeType.OakLeaf &&
+            block !== CubeType.ShrubLeaf &&
+            block !== CubeType.ShrubStem
+          ) {
+            continue;
+          }
+
+          const key = `${originX + x},${y},${originZ + z}`;
+          if (renderedPositions.has(key)) {
+            foundRenderedVegetation = true;
+            break outer;
+          }
+        }
+      }
+    }
+
+    expect(foundRenderedVegetation).toBe(true);
+  });
+
   describe("tickFluids", () => {
     it("spreads a source placed above terrain into the surrounding air column", () => {
       const chunk = new Chunk(0, 0, 8, 3);
@@ -145,9 +205,6 @@ describe("Chunk", () => {
     });
 
     it("decays flowing fluid once its source is removed", () => {
-      // Use a larger chunk so the max-7 spread stays off the boundary
-      // (boundary cells are conservatively treated as supported since we
-      // can't see into adjacent chunks cheaply).
       const chunk = new Chunk(0, 0, 32, 7);
       const y = CHUNK_HEIGHT - 1;
       chunk.addFluid(16, y, 16, CubeType.Water, 0);
@@ -156,8 +213,6 @@ describe("Chunk", () => {
       expect(fluidAfterSpread).toBeGreaterThan(4);
 
       expect(chunk.removeFluidAt(16, y, 16)).toBe(true);
-      // The cascade removes one level-ring per tick, so spread-radius
-      // (FLUID_MAX_LEVEL=7) ticks plus slack is enough.
       for (let t = 0; t < 40; t++) chunk.tickFluids();
 
       expect(chunk.getBlock(16, y, 16)).toBe(CubeType.Air);
@@ -174,8 +229,6 @@ describe("Chunk", () => {
     it("turns water into stone on contact with lava", () => {
       const chunk = new Chunk(0, 0, 8, 9);
       const y = CHUNK_HEIGHT - 1;
-      // Give both sources a solid stone floor so they spread laterally
-      // rather than falling past each other.
       paintStoneFloor(chunk, y - 1);
       chunk.addFluid(2, y, 4, CubeType.Water, 0);
       chunk.addFluid(5, y, 4, CubeType.Lava, 0);
@@ -194,8 +247,6 @@ describe("Chunk", () => {
     it("reports a cross-chunk spillover when a flow leaves the chunk", () => {
       const chunk = new Chunk(0, 0, 4, 11);
       const y = CHUNK_HEIGHT - 1;
-      // Floor so the test source flows laterally rather than straight down,
-      // guaranteeing it reaches the chunk boundary.
       paintStoneFloor(chunk, y - 1);
       chunk.addFluid(0, y, 2, CubeType.Water, 0);
 

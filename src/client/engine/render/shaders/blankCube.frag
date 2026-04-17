@@ -10,16 +10,14 @@ uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
 
-// Per-type LUT uniforms (indexed by CubeType, 15 entries covering Air–Permafrost).
+// Per-type LUT uniforms (indexed by CubeType, 20 entries each).
 // col1 = mix(color,          uLut1Fixed[type], uLut1Blend[type])
 // col2 = mix(color * scale,  uLut2Fixed[type], uLut2Blend[type])
-// Water/Lava entries are dummies — those types compute kd directly in the fluid branch.
-// Permafrost entries are dummies — that type overrides col1/col2 in the grass branch.
-uniform vec3 uLut1Fixed[15];
-uniform float uLut1Blend[15];
-uniform vec3 uLut2Fixed[15];
-uniform float uLut2Blend[15];
-uniform float uLut2Scale[15];
+uniform vec3 uLut1Fixed[20];
+uniform float uLut1Blend[20];
+uniform vec3 uLut2Fixed[20];
+uniform float uLut2Blend[20];
+uniform float uLut2Scale[20];
 
 in vec4 normal;
 in vec4 wsPos;

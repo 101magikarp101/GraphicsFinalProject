@@ -23,6 +23,8 @@ export interface ChunkBlob {
   originX: number;
   originZ: number;
   blocks: Uint8Array;
+  placedObjects: ReturnType<Chunk["placedObjects"]>;
+  placedObjectCounts: ReturnType<Chunk["placedObjectCounts"]>;
 }
 
 interface ChunkEntry {
@@ -236,7 +238,13 @@ export class ChunkStorage {
       const key = chunkKey(originX, originZ);
       const entry = this.chunks.get(key);
       if (entry) {
-        hits.push({ originX, originZ, blocks: this.encodedBlocks(entry) });
+        hits.push({
+          originX,
+          originZ,
+          blocks: this.encodedBlocks(entry),
+          placedObjects: entry.chunk.placedObjects(),
+          placedObjectCounts: entry.chunk.placedObjectCounts(),
+        });
       } else {
         misses.push({ originX, originZ });
       }
@@ -263,7 +271,13 @@ export class ChunkStorage {
     for (const { originX, originZ } of origins) {
       const entry = this.chunks.peek(chunkKey(originX, originZ));
       if (!entry) continue;
-      result.push({ originX, originZ, blocks: this.encodedBlocks(entry) });
+      result.push({
+        originX,
+        originZ,
+        blocks: this.encodedBlocks(entry),
+        placedObjects: entry.chunk.placedObjects(),
+        placedObjectCounts: entry.chunk.placedObjectCounts(),
+      });
     }
     this.preGenerateNeighbors(generated);
     return result;

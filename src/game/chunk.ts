@@ -2,6 +2,17 @@
 import { decodeBinary, encodeBinary } from "@thi.ng/rle-pack";
 import { CUBE_TYPE_INFO, CubeType } from "@/client/engine/render/cube-types";
 import { BIOME_INFOS, Biome, sampleColumn, surfaceBlock } from "@/game/biome";
+import {
+  emptyPlacedObjectCounts,
+  generatePlacedObjectsForChunk,
+  type PlacedObject,
+  PlacedObjectType,
+} from "@/game/object-placement";
+import {
+  canPlaceVegetationTemplate,
+  pickVegetationTemplate,
+  placeVegetationTemplate,
+} from "@/game/vegetation-structures";
 import { perlin3D } from "@/utils/noise";
 
 export const CHUNK_SIZE = 64;
@@ -463,14 +474,19 @@ export class Chunk {
   // types where we store the actual block data
   public blocks: Uint8Array; // 3D block grid (CubeType per voxel): x z y // y*(S*S) + z*S + x
   public heightMap: Uint8Array; // surface height per (i,j) column x z // z*S + x
+  public biomeMap: Uint8Array; // biome per (i,j) column x z // z*S + x
   /** Flow level per voxel; 0 for source/non-fluid, 1..FLUID_MAX_LEVEL for flowing. */
   public fluidLevels: Uint8Array;
   private surfaceTypesMap: Uint8Array; // top-most block type per (x, z) column
+  /** Terrain-only surface height per column (before vegetation blocks are placed), z*S + x. */
+  public terrainHeightMap: Uint8Array = new Uint8Array(0);
 
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
   private seed: number; // Seed for terrain generation
+  private placedObjectsData: PlacedObject[] = [];
+  private placedObjectCountsData: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
 
   // types to update for Rendering
   private cubes: number = 0;
@@ -508,12 +524,14 @@ export class Chunk {
     this.seed = seed;
 
     this.heightMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+    this.biomeMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
     this.surfaceTypesMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
     if (prefilled) {
       this.blocks = prefilled.blocks;
       this.fluidLevels = prefilled.fluidLevels ?? new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
       this.buildHeightMap();
+      this.rebuildPlacedObjects();
     } else {
       this.blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // with default value 0 = CubeType.Air
       this.fluidLevels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
@@ -538,6 +556,62 @@ export class Chunk {
    * Rebuilds heightMap/surfaceTypesMap from the current `blocks` array. Used
    * when hydrating a Chunk from persisted data instead of terrain generation.
    */
+  private rebuildPlacedObjects(): void {
+    const topleftx = this.x - this.size / 2;
+    const topleftz = this.y - this.size / 2;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const { biome } = sampleColumn(this.seed, topleftx + j, topleftz + i);
+        this.biomeMap[this.size * i + j] = biome;
+      }
+    }
+    const anchors = generatePlacedObjectsForChunk({
+      seed: this.seed,
+      chunkOriginX: topleftx,
+      chunkOriginZ: topleftz,
+      chunkSize: this.size,
+      sampleAt: (localX, localZ) => {
+        const idx = localZ * this.size + localX;
+        const surfaceY = this.heightMap[idx] as number;
+        const center = surfaceY;
+        const north = localZ > 0 ? (this.heightMap[(localZ - 1) * this.size + localX] as number) : center;
+        const south = localZ + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX] as number) : center;
+        const east = localX + 1 < this.size ? (this.heightMap[localZ * this.size + localX + 1] as number) : center;
+        const west = localX > 0 ? (this.heightMap[localZ * this.size + localX - 1] as number) : center;
+        const northEast =
+          localZ > 0 && localX + 1 < this.size
+            ? (this.heightMap[(localZ - 1) * this.size + localX + 1] as number)
+            : center;
+        const northWest =
+          localZ > 0 && localX > 0 ? (this.heightMap[(localZ - 1) * this.size + localX - 1] as number) : center;
+        const southEast =
+          localZ + 1 < this.size && localX + 1 < this.size
+            ? (this.heightMap[(localZ + 1) * this.size + localX + 1] as number)
+            : center;
+        const southWest =
+          localZ + 1 < this.size && localX > 0
+            ? (this.heightMap[(localZ + 1) * this.size + localX - 1] as number)
+            : center;
+        return {
+          biome: this.biomeMap[idx] as number,
+          surfaceY,
+          surfaceBlock: this.getBlock(localX, surfaceY, localZ),
+          northY: north,
+          southY: south,
+          eastY: east,
+          westY: west,
+          northEastY: northEast,
+          northWestY: northWest,
+          southEastY: southEast,
+          southWestY: southWest,
+          isSubmerged: false,
+          distanceToChunkEdge: Math.min(localX, localZ, this.size - 1 - localX, this.size - 1 - localZ),
+        };
+      },
+    });
+    this.placedObjectsData = this.applyVegetationStructures(anchors, topleftx, topleftz);
+  }
+
   private buildHeightMap(): void {
     const S = this.size;
     for (let z = 0; z < S; z++) {
@@ -642,6 +716,62 @@ export class Chunk {
     this.blocks[ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx] = type;
   }
 
+  private applyVegetationStructures(
+    anchors: readonly PlacedObject[],
+    chunkOriginX: number,
+    chunkOriginZ: number,
+  ): PlacedObject[] {
+    const renderableObjects: PlacedObject[] = [];
+    const counts: Record<PlacedObjectType, number> = emptyPlacedObjectCounts();
+
+    for (const anchor of anchors) {
+      if (
+        anchor.type !== PlacedObjectType.Tree &&
+        anchor.type !== PlacedObjectType.Shrub &&
+        anchor.type !== PlacedObjectType.Cactus
+      ) {
+        renderableObjects.push(anchor);
+        counts[anchor.type]++;
+        continue;
+      }
+
+      const anchorLocalX = Math.floor(anchor.x - chunkOriginX);
+      const anchorLocalZ = Math.floor(anchor.z - chunkOriginZ);
+      const groundY = Math.floor(anchor.y);
+      const template = pickVegetationTemplate(this.seed, anchor.type, Math.floor(anchor.x), Math.floor(anchor.z));
+
+      if (
+        !canPlaceVegetationTemplate(
+          {
+            chunkHeight: CHUNK_HEIGHT,
+            chunkSize: CHUNK_SIZE,
+            getBlock: (localX, y, localZ) => this.getBlock(localX, y, localZ),
+          },
+          anchorLocalX,
+          groundY,
+          anchorLocalZ,
+          template,
+        )
+      ) {
+        continue;
+      }
+
+      placeVegetationTemplate(
+        {
+          setBlock: (localX, y, localZ, type) => this.setBlock(localX, y, localZ, type),
+        },
+        anchorLocalX,
+        groundY,
+        anchorLocalZ,
+        template,
+      );
+      counts[anchor.type]++;
+    }
+
+    this.placedObjectCountsData = counts;
+    return renderableObjects;
+  }
+
   // Ore definitions: [cubeType, seedOffset, frequency, threshold, minY, maxY]
   private static readonly ORES: [CubeType, number, number, number, number, number][] = [
     [CubeType.CoalOre, 300, 1 / 8, 0.55, 5, 80],
@@ -669,6 +799,7 @@ export class Chunk {
         const height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, rawHeight));
 
         this.heightMap[this.size * i + j] = height;
+        this.biomeMap[this.size * i + j] = biome;
 
         this.setBlock(j, 0, i, CubeType.Bedrock);
         for (let y = 1; y < height - 3; y++) {
@@ -835,7 +966,76 @@ export class Chunk {
       }
     }
 
-    // --- Pass 4: Deep cave lava ---
+    // --- Pass 4: Deterministic non-cube object placement ---
+    const placedObjectAnchors = generatePlacedObjectsForChunk({
+      seed: this.seed,
+      chunkOriginX: topleftx,
+      chunkOriginZ: topleftz,
+      chunkSize: this.size,
+      sampleAt: (localX, localZ) => {
+        const idx = localZ * this.size + localX;
+        const surfaceY = this.heightMap[idx] as number;
+        const center = surfaceY;
+        const north = localZ > 0 ? (this.heightMap[(localZ - 1) * this.size + localX] as number) : center;
+        const south = localZ + 1 < this.size ? (this.heightMap[(localZ + 1) * this.size + localX] as number) : center;
+        const east = localX + 1 < this.size ? (this.heightMap[localZ * this.size + localX + 1] as number) : center;
+        const west = localX > 0 ? (this.heightMap[localZ * this.size + localX - 1] as number) : center;
+        const northEast =
+          localZ > 0 && localX + 1 < this.size
+            ? (this.heightMap[(localZ - 1) * this.size + localX + 1] as number)
+            : center;
+        const northWest =
+          localZ > 0 && localX > 0 ? (this.heightMap[(localZ - 1) * this.size + localX - 1] as number) : center;
+        const southEast =
+          localZ + 1 < this.size && localX + 1 < this.size
+            ? (this.heightMap[(localZ + 1) * this.size + localX + 1] as number)
+            : center;
+        const southWest =
+          localZ + 1 < this.size && localX > 0
+            ? (this.heightMap[(localZ + 1) * this.size + localX - 1] as number)
+            : center;
+
+        return {
+          biome: this.biomeMap[idx] as number,
+          surfaceY,
+          surfaceBlock: this.getBlock(localX, surfaceY, localZ),
+          northY: north,
+          southY: south,
+          eastY: east,
+          westY: west,
+          northEastY: northEast,
+          northWestY: northWest,
+          southEastY: southEast,
+          southWestY: southWest,
+          isSubmerged: false,
+          distanceToChunkEdge: Math.min(localX, localZ, this.size - 1 - localX, this.size - 1 - localZ),
+        };
+      },
+    });
+    this.placedObjectsData = this.applyVegetationStructures(placedObjectAnchors, topleftx, topleftz);
+
+    // Snapshot terrain-only heights before extending for vegetation.
+    this.terrainHeightMap = this.heightMap.slice();
+
+    // Extend heightMap to include vegetation blocks placed above terrain.
+    // Scan from the top of the chunk downward to find the actual highest solid block —
+    // a consecutive upward walk would stop at the first air gap and miss floating leaves.
+    // VERY SIMPLE, can probably add this logic to applyVegetationStructures to directly update heightMap
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const idx = this.size * i + j;
+        const terrainY = this.heightMap[idx] as number;
+        for (let y = CHUNK_HEIGHT - 1; y > terrainY; y--) {
+          if (this.getBlock(j, y, i) !== CubeType.Air) {
+            this.heightMap[idx] = y;
+            this.surfaceTypesMap[idx] = this.getBlock(j, y, i);
+            break;
+          }
+        }
+      }
+    }
+
+    // --- Pass 5: Deep cave lava ---
     // Any air pocket at or below CAVE_LAVA_LEVEL (above bedrock at Y=0) becomes lava,
     // creating natural lava pools at the bottom of caves.
     for (let i = 0; i < this.size; i++) {
@@ -848,7 +1048,7 @@ export class Chunk {
       }
     }
 
-    // --- Pass 5: Surface fluid fill ---
+    // --- Pass 6: Surface fluid fill ---
     // Desert: coat low-lying surface blocks with Lava (follows terrain slope).
     // All other biomes: fill low columns with Water up to SEA_LEVEL.
     // heightMap is updated so renderChunk scans up to the fluid surface.
@@ -1312,6 +1512,14 @@ export class Chunk {
 
   public cubeAmbientOcclusion(): Uint8Array {
     return this.cubeAmbientOcclusionU8;
+  }
+
+  public placedObjects(): readonly PlacedObject[] {
+    return this.placedObjectsData;
+  }
+
+  public placedObjectCounts(): Readonly<Record<PlacedObjectType, number>> {
+    return this.placedObjectCountsData;
   }
 
   /** Returns a detached copy of the chunk's surface heights for minimap rendering. */

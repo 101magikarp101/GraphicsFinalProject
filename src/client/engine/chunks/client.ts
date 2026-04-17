@@ -1,4 +1,5 @@
 import { releaseProxy, wrap } from "comlink";
+import type { PlacedObject, PlacedObjectType } from "@/game/object-placement";
 import ChunkWorkerConstructor from "./worker?worker";
 
 /** Render data for a single chunk, tagged with its world-space origin. */
@@ -15,15 +16,20 @@ export interface SingleChunkData {
   /** Detached copy of surface block type per column, indexed `z*S + x`. */
   surfaceTypes: Uint8Array;
   numCubes: number;
+  placedObjects: readonly PlacedObject[];
+  placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
   /** Per-section cube offset into the render arrays (128 entries). */
   sectionOffsets: Uint32Array;
   /** Per-section cube count (128 entries). */
   sectionCounts: Uint16Array;
 }
 
-/** Per-chunk render data for all loaded chunks in a generation. */
+/** Mesh-only chunk data returned by the worker (no placed objects). */
+export type WorkerChunkData = Omit<SingleChunkData, "placedObjects" | "placedObjectCounts">;
+
+/** Per-chunk mesh batch returned by the worker. */
 export interface ChunkBatchData {
-  chunks: SingleChunkData[];
+  chunks: WorkerChunkData[];
 }
 
 export interface ChunkWorkerApi {

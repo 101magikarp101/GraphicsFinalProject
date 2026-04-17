@@ -12,6 +12,8 @@ import {
   sectionRegion,
   updateColumnSurface,
 } from "@/game/chunk";
+import type { PlacedObject, PlacedObjectType } from "@/game/object-placement";
+import { emptyPlacedObjectCounts } from "@/game/object-placement";
 import { Player } from "@/game/player";
 import type { ChunkBatchData, SingleChunkData } from "./client";
 import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
@@ -42,7 +44,17 @@ export class ChunkManager {
 
   private chunkDataMap = new Map<string, SingleChunkData>();
   private localOverrides = new Map<string, Map<number, CubeType>>();
-  private ingestQueue: Array<{ originX: number; originZ: number; blocks: Uint8Array }> = [];
+  private ingestQueue: Array<{
+    originX: number;
+    originZ: number;
+    blocks: Uint8Array;
+    placedObjects: readonly PlacedObject[];
+    placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
+  }> = [];
+  private pendingPlacedObjects = new Map<
+    string,
+    { objects: readonly PlacedObject[]; counts: Readonly<Record<PlacedObjectType, number>> }
+  >();
   private workerBusy = false;
   private resetGeneration = 0;
   private positionBuffer = new Float32Array(0);
@@ -55,6 +67,7 @@ export class ChunkManager {
   colors = new Float32Array(0);
   ambientOcclusion = new Uint8Array(0);
   count = 0;
+  placedObjects: readonly PlacedObject[] = [];
 
   constructor(
     client: ChunkClient,
@@ -70,7 +83,15 @@ export class ChunkManager {
   }
 
   /** Queues server-pushed chunk data for incremental ingestion. */
-  receiveChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): void {
+  receiveChunks(
+    chunks: Array<{
+      originX: number;
+      originZ: number;
+      blocks: Uint8Array;
+      placedObjects: readonly PlacedObject[];
+      placedObjectCounts: Readonly<Record<PlacedObjectType, number>>;
+    }>,
+  ): void {
     this.ingestQueue.push(...chunks);
   }
 
@@ -81,6 +102,9 @@ export class ChunkManager {
   processIncoming(): void {
     if (this.workerBusy || this.ingestQueue.length === 0) return;
     const batch = this.ingestQueue.splice(0, INGEST_PER_FRAME);
+    for (const { originX, originZ, placedObjects, placedObjectCounts } of batch) {
+      this.pendingPlacedObjects.set(chunkKey(originX, originZ), { objects: placedObjects, counts: placedObjectCounts });
+    }
     this.workerBusy = true;
     const gen = this.resetGeneration;
     this.client.loadChunks(batch).then(
@@ -103,6 +127,18 @@ export class ChunkManager {
     this.lastOriginX = originX;
     this.lastOriginZ = originZ;
     this.evictDistant(originX, originZ);
+  }
+
+  reset(): void {
+    this.lastOriginX = NaN;
+    this.lastOriginZ = NaN;
+    this.chunkDataMap.clear();
+    this.localOverrides.clear();
+    this.ingestQueue.length = 0;
+    this.pendingPlacedObjects.clear();
+    this.resetGeneration++;
+    void this.client.clearCache();
+    this.dirty = true;
   }
 
   setRenderDistance(renderDistance: number): void {
@@ -452,11 +488,28 @@ export class ChunkManager {
   }
 
   private mergeBatch(batch: ChunkBatchData): void {
-    for (const chunk of batch.chunks) {
-      const key = chunkKey(chunk.originX, chunk.originZ);
+    for (const workerChunk of batch.chunks) {
+      const key = chunkKey(workerChunk.originX, workerChunk.originZ);
+      const pending = this.pendingPlacedObjects.get(key);
+      const existing = this.chunkDataMap.get(key);
+      const chunk: SingleChunkData = {
+        ...workerChunk,
+        placedObjects: pending?.objects ?? existing?.placedObjects ?? [],
+        placedObjectCounts: pending?.counts ?? existing?.placedObjectCounts ?? emptyPlacedObjectCounts(),
+      };
+      if (pending) this.pendingPlacedObjects.delete(key);
       this.chunkDataMap.set(key, chunk);
       this.reapplyOverrides(chunk, key);
     }
+
+    const placedObjects: PlacedObject[] = [];
+    for (const chunk of this.chunkDataMap.values()) {
+      for (const object of chunk.placedObjects) {
+        placedObjects.push(object);
+      }
+    }
+
+    this.placedObjects = placedObjects;
     this.dirty = true;
     this.onChange?.();
   }
@@ -526,6 +579,10 @@ export class ChunkManager {
 
   dispose(): void {
     this.client.dispose();
+  }
+
+  getVisiblePlacedObjects(): readonly PlacedObject[] {
+    return this.placedObjects;
   }
 
   sampleSurface(wx: number, wz: number): number | undefined {

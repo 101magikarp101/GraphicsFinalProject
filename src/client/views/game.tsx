@@ -197,10 +197,10 @@ export default function GameView() {
             onlinePlayers={Object.values(room.remotePlayers)}
             onTeleportTo={(id) => {
               const target = room.remotePlayers[id];
-              const s = room.session();
-              if (!target || !s) return;
+              const session = room.session();
+              if (!target || !session) return;
               room.replicated()?.teleport({ x: target.x, y: target.y, z: target.z });
-              s.teleportTo(target.x, target.y, target.z);
+              session.teleportTo(target.x, target.y, target.z);
             }}
             pointerLocked={game.diagnostics.client.pointerLocked}
           />

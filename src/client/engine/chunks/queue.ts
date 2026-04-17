@@ -16,7 +16,7 @@ import {
   sectionRegion,
   updateColumnSurface,
 } from "@/game/chunk";
-import type { ChunkBatchData, SingleChunkData } from "./client";
+import type { ChunkBatchData, WorkerChunkData } from "./client";
 
 interface SectionRenderData {
   cubePositions: Float32Array;
@@ -137,7 +137,7 @@ function bucketBySections(result: RenderBlockResult, originX: number, originZ: n
   };
 }
 
-function buildChunkData(ox: number, oz: number, cached: CachedChunkData, result: ConcatenatedResult): SingleChunkData {
+function buildChunkData(ox: number, oz: number, cached: CachedChunkData, result: ConcatenatedResult): WorkerChunkData {
   return {
     originX: ox,
     originZ: oz,
@@ -181,7 +181,7 @@ export class ChunkMeshBuilder {
       }
     }
 
-    const chunks: SingleChunkData[] = [];
+    const chunks: WorkerChunkData[] = [];
     for (const key of toRender) {
       const [oxStr, ozStr] = key.split(",");
       const ox = Number(oxStr);
@@ -206,19 +206,7 @@ export class ChunkMeshBuilder {
               }
             : null;
       }
-      chunks.push({
-        originX: ox,
-        originZ: oz,
-        cubePositions: sectioned.cubePositions,
-        cubeColors: sectioned.cubeColors,
-        blocks: cached.blocks,
-        cubeAmbientOcclusion: sectioned.cubeAmbientOcclusion,
-        surfaceHeights: cached.heightMap.slice(),
-        surfaceTypes: cached.surfaceTypes.slice(),
-        numCubes: sectioned.numCubes,
-        sectionOffsets: sectioned.sectionOffsets,
-        sectionCounts: sectioned.sectionCounts,
-      });
+      chunks.push(buildChunkData(ox, oz, cached, sectioned));
     }
 
     return { chunks };
@@ -263,7 +251,7 @@ export class ChunkMeshBuilder {
     }
 
     // Rebuild chunk-level output from sections
-    const chunks: SingleChunkData[] = [buildChunkData(ox, oz, cached, concatenateSections(cached.sections))];
+    const chunks: WorkerChunkData[] = [buildChunkData(ox, oz, cached, concatenateSections(cached.sections))];
 
     // If block is at a chunk edge, also re-render the neighbor chunk's edge section
     if (lx === 0 || lx === CHUNK_SIZE - 1 || lz === 0 || lz === CHUNK_SIZE - 1) {
@@ -294,7 +282,7 @@ export class ChunkMeshBuilder {
     lz: number,
     wy: number,
     worldGetBlock: (wx: number, wy: number, wz: number) => CubeType,
-    chunks: SingleChunkData[],
+    chunks: WorkerChunkData[],
   ): void {
     const neighbors: [number, number, number, number][] = [];
     if (lx === 0) neighbors.push([ox - CHUNK_SIZE, oz, CHUNK_SIZE - 1, lz]);
