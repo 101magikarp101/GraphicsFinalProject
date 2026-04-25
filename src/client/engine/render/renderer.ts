@@ -44,6 +44,8 @@ export interface RenderView {
 interface EntityPass {
   pass: RenderPass;
   cullFace: boolean;
+  depthTest: boolean;
+  blendAlpha: boolean;
   instancedAttributes: { name: string; size: number }[];
 }
 
@@ -85,6 +87,8 @@ export class Renderer {
       this.entityPasses.set(def.key, {
         pass,
         cullFace: def.cullFace ?? true,
+        depthTest: def.depthTest ?? true,
+        blendAlpha: def.blendAlpha ?? false,
         instancedAttributes: def.instancedAttributes,
       });
     }
@@ -128,12 +132,23 @@ export class Renderer {
       const ep = this.entityPasses.get(entity.key);
       if (!ep) continue;
 
+      if (!ep.depthTest) gl.disable(gl.DEPTH_TEST);
       if (!ep.cullFace) gl.disable(gl.CULL_FACE);
+      if (ep.blendAlpha) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+      }
       for (const { name, size } of ep.instancedAttributes) {
         const buf = entity.buffers[name];
         if (buf) ep.pass.updateAttributeBuffer(name, buf.subarray(0, entity.count * size));
       }
       ep.pass.drawInstanced(entity.count);
+      if (ep.blendAlpha) {
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+      }
+      if (!ep.depthTest) gl.enable(gl.DEPTH_TEST);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
 

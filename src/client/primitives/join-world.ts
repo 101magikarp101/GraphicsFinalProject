@@ -3,6 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
 import { createInventoryUiState } from "@/game/crafting";
+import type { CreaturePublicState } from "@/game/creature";
 import { Player, type PlayerPublicState, type PlayerState } from "@/game/player";
 import type { ChunkDataPacket, RoomSessionApi, ServerPacket, ServerTick } from "@/game/protocol";
 import { createSoundEffects } from "./sounds";
@@ -30,6 +31,7 @@ export function joinWorld(roomId: string) {
   });
 
   const [remotePlayers, setRemotePlayers] = createStore<Record<string, PlayerPublicState>>({});
+  const [remoteCreatures, setRemoteCreatures] = createStore<Record<string, CreaturePublicState>>({});
   const [tickInfo, setTickInfo] = createStore<TickInfo>({ tick: 0, tickTimeMs: 0, timeOfDayS: 0 });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
   const sounds = createSoundEffects();
@@ -95,6 +97,24 @@ export function joinWorld(roomId: string) {
       case "chunkData":
         chunkDataQueue.push(packet.chunks);
         return;
+      case "creatureSpawn": {
+        const next = { ...remoteCreatures };
+        for (const creature of packet.creatures) next[creature.id] = creature;
+        setRemoteCreatures(reconcile(next));
+        return;
+      }
+      case "creatureState": {
+        const next = { ...remoteCreatures };
+        for (const creature of packet.creatures) next[creature.id] = creature;
+        setRemoteCreatures(reconcile(next));
+        return;
+      }
+      case "creatureDespawn": {
+        const next = { ...remoteCreatures };
+        for (const id of packet.ids) delete next[id];
+        setRemoteCreatures(reconcile(next));
+        return;
+      }
     }
   }
 
@@ -116,6 +136,7 @@ export function joinWorld(roomId: string) {
   return {
     player,
     remotePlayers,
+    remoteCreatures,
     tickInfo,
     snapCount,
     session,

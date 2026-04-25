@@ -15,6 +15,7 @@ export interface GameplayPreferences {
   invertY: boolean;
   renderDistance: number;
   showDiagnostics: boolean;
+  showMobHighlight: boolean;
 }
 
 const DEFAULT_PREFERENCES: GameplayPreferences = {
@@ -23,6 +24,7 @@ const DEFAULT_PREFERENCES: GameplayPreferences = {
   invertY: false,
   renderDistance: DEFAULT_RENDER_DISTANCE,
   showDiagnostics: true,
+  showMobHighlight: true,
 };
 
 export function createGameplayPreferences() {
@@ -37,6 +39,7 @@ export function createGameplayPreferences() {
       invertY: preferences.invertY,
       renderDistance: preferences.renderDistance,
       showDiagnostics: preferences.showDiagnostics,
+      showMobHighlight: preferences.showMobHighlight,
     } satisfies GameplayPreferences);
 
     window.localStorage.setItem(STORAGE_KEY, serialized);
@@ -63,6 +66,9 @@ export function createGameplayPreferences() {
     setShowDiagnostics(showDiagnostics: boolean) {
       setPreferences("showDiagnostics", showDiagnostics);
     },
+    setShowMobHighlight(showMobHighlight: boolean) {
+      setPreferences("showMobHighlight", showMobHighlight);
+    },
   } as const;
 }
 
@@ -88,6 +94,7 @@ function readGameplayPreferences(): GameplayPreferences {
       invertY: Boolean(parsed.invertY),
       renderDistance: clampRenderDistance(parsed.renderDistance ?? DEFAULT_PREFERENCES.renderDistance),
       showDiagnostics: parsed.showDiagnostics ?? DEFAULT_PREFERENCES.showDiagnostics,
+      showMobHighlight: parsed.showMobHighlight ?? DEFAULT_PREFERENCES.showMobHighlight,
     };
   } catch {
     return {

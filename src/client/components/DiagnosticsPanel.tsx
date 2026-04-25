@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import type { PlayerState } from "@/game/player";
 import { DAY_LENGTH_S } from "@/game/time";
+import type { BenchmarkDiagnostics } from "../engine/create-game";
 import { Button } from "./Button";
 
 const FRAME_GRAPH_WIDTH = 240;
@@ -22,11 +23,19 @@ interface DiagnosticsPanelProps {
   computeTimeHistory: readonly number[];
   gpuTimeMs: number;
   gpuTimeHistory: readonly number[];
+  p95ComputeTimeMs: number;
+  p95GpuTimeMs: number;
+  visibleCreatures: number;
   mspt: number;
   msptHistory: readonly number[];
   snapsPerSec: number;
   packetsPerSec: number;
   timeOfDayS: number;
+  benchmark: BenchmarkDiagnostics;
+  onBenchmarkStart?: () => void;
+  onBenchmarkStop?: () => void;
+  onBenchmarkExportJson?: () => void;
+  onBenchmarkExportCsv?: () => void;
   onSetTimeOfDay: (timeS: number) => void;
   onlinePlayers: readonly OnlinePlayer[];
   onTeleportTo: (playerId: string) => void;
@@ -166,6 +175,11 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           </span>
         )}
       </div>
+      <div class="text-xs text-gray-300">
+        p95 compute {props.p95ComputeTimeMs.toFixed(2)}ms
+        {props.gpuTimeMs > 0 && <span> · p95 gpu {props.p95GpuTimeMs.toFixed(2)}ms</span>}
+      </div>
+      <div class="text-xs text-gray-300">wild visible {props.visibleCreatures}</div>
       <div class="my-2">
         <Graph
           height={FRAME_GRAPH_HEIGHT}
@@ -212,6 +226,56 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         />
       </div>
       <div class="border-t border-white/20 pt-2">
+        <div class="mb-2 rounded border border-white/20 bg-black/30 p-2">
+          <div class="flex items-center justify-between">
+            <div class="text-gray-400">benchmark</div>
+            <div class="text-xs text-gray-300">
+              {props.benchmark.enabled ? `${props.benchmark.scene} ${props.benchmark.elapsedS.toFixed(1)}s` : "off"}
+            </div>
+          </div>
+          <div class="mt-1 text-xs text-gray-300">
+            {props.benchmark.active ? "running" : "idle"} · {props.benchmark.sampleCount} samples
+          </div>
+          {props.benchmark.summary && (
+            <div class="mt-1 text-xs text-gray-300">
+              avg {props.benchmark.summary.avgComputeMs.toFixed(2)}ms · p95 {props.benchmark.summary.p95ComputeMs.toFixed(2)}ms
+            </div>
+          )}
+          <div class="mt-2 flex flex-wrap gap-1">
+            <Button
+              variant="ghost"
+              class="text-xs"
+              disabled={!props.onBenchmarkStart || props.benchmark.active}
+              onClick={props.onBenchmarkStart}
+            >
+              Start
+            </Button>
+            <Button
+              variant="ghost"
+              class="text-xs"
+              disabled={!props.onBenchmarkStop || !props.benchmark.active}
+              onClick={props.onBenchmarkStop}
+            >
+              Stop
+            </Button>
+            <Button
+              variant="ghost"
+              class="text-xs"
+              disabled={!props.onBenchmarkExportJson || !props.benchmark.summary}
+              onClick={props.onBenchmarkExportJson}
+            >
+              Export JSON
+            </Button>
+            <Button
+              variant="ghost"
+              class="text-xs"
+              disabled={!props.onBenchmarkExportCsv || !props.benchmark.summary}
+              onClick={props.onBenchmarkExportCsv}
+            >
+              Export CSV
+            </Button>
+          </div>
+        </div>
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
         <ul class="mt-1">
           {props.onlinePlayers.map((p) => (

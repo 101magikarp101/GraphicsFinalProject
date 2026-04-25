@@ -5,17 +5,31 @@ import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE } from "@/game/chunk";
+import type { CreaturePublicState } from "@/game/creature";
 import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
-import { createRateMeter, createRingBuffer } from "../primitives";
+import {
+  benchmarkSamplesToCsv,
+  benchmarkSummaryToCsv,
+  createRateMeter,
+  createRingBuffer,
+  summarizeBenchmark,
+  type BenchmarkConfig,
+  type BenchmarkSample,
+  type BenchmarkScene,
+  type BenchmarkSummary,
+} from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import {
+  creatureHighlightPassDef,
+  creaturePassDef,
+  creaturePipelineConfig,
   createEntityPipeline,
   type EntityDrawData,
   type GpuBuffers,
@@ -41,9 +55,11 @@ export interface CreateGameArgs {
     mouseSensitivity: () => number;
     invertY: () => boolean;
     renderDistance: () => number;
+    showMobHighlight: () => boolean;
   };
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
+  benchmark?: BenchmarkConfig;
   shortcuts?: Omit<InputOptions, "onReset">;
 }
 
@@ -59,7 +75,20 @@ export interface ClientDiagnostics {
   gpuTimeMs: number;
   /** Rolling ring-buffer of recent GPU times for sparkline display. */
   gpuTimeHistory: number[];
+  p95ComputeTimeMs: number;
+  p95GpuTimeMs: number;
+  visibleCreatures: number;
   pointerLocked: boolean;
+}
+
+export interface BenchmarkDiagnostics {
+  enabled: boolean;
+  active: boolean;
+  scene: BenchmarkScene;
+  elapsedS: number;
+  durationS: number;
+  sampleCount: number;
+  summary?: BenchmarkSummary;
 }
 
 /** Server-side performance metrics derived from `ServerTick` packets. */
@@ -81,6 +110,7 @@ interface MutableGameState {
   diagnostics: {
     client: ClientDiagnostics;
     server: ServerDiagnostics;
+    benchmark: BenchmarkDiagnostics;
   };
 }
 
@@ -98,6 +128,14 @@ export interface MinimapApi {
 
 export interface GameState extends Readonly<MutableGameState> {
   readonly minimap: MinimapApi;
+  readonly benchmark: {
+    readonly canRun: boolean;
+    readonly active: () => boolean;
+    start: () => void;
+    stop: () => void;
+    exportJson: () => void;
+    exportCsv: () => void;
+  };
 }
 
 /** Sliding window for FPS / TPS / snap-rate averaging. */
@@ -107,9 +145,50 @@ const FRAME_HISTORY_SIZE = 120;
 /** Clamp input dt so a long tab-away doesn't cause a huge movement spike. */
 const MAX_INPUT_DT_MS = 100;
 const INPUT_SEND_INTERVAL_MS = 50;
+const BENCHMARK_TERMINAL_OUTPUT_ENABLED = false;
+
+const BENCHMARK_SCENE_ANCHORS: Record<BenchmarkScene, readonly [number, number, number]> = {
+  open: [0, 82, 0],
+  foliage: [46, 78, 46],
+  cave: [0, 34, 0],
+  mixed: [80, 72, -20],
+};
+
+function computeP95(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1));
+  return sorted[index] ?? 0;
+}
+
+function benchmarkOrbit(scene: BenchmarkScene, elapsedS: number): { yaw: number; pitch: number } {
+  const speed = scene === "mixed" ? 0.45 : scene === "foliage" ? 0.32 : scene === "cave" ? 0.2 : 0.24;
+  const pitchAmp = scene === "cave" ? 0.06 : 0.1;
+  return {
+    yaw: elapsedS * speed,
+    pitch: Math.sin(elapsedS * 0.75) * pitchAmp,
+  };
+}
+
+function downloadTextFile(fileName: string, content: string, mimeType: string): void {
+  if (typeof document === "undefined") return;
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 function initRenderState(gl: HTMLCanvasElement, player: Player) {
-  const renderer = new Renderer(gl, [playerPassDef, placedObjectPassDef, placedRockPassDef]);
+  const renderer = new Renderer(gl, [
+    playerPassDef,
+    creaturePassDef,
+    creatureHighlightPassDef,
+    placedObjectPassDef,
+    placedRockPassDef,
+  ]);
   const camera = new CameraController({ width: gl.clientWidth, height: gl.clientHeight });
   camera.setOrientation(player.state.yaw, player.state.pitch);
   camera.setPosition(player.position);
@@ -125,6 +204,10 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
 export function createGame(args: CreateGameArgs): GameState {
   const room = () => args.room;
   const inputEnabled = () => args.inputEnabled?.() ?? true;
+  const benchmarkConfig = args.benchmark?.enabled ? args.benchmark : undefined;
+  const benchmarkEffectiveDurationS = benchmarkConfig
+    ? Math.max(1, benchmarkConfig.durationS - benchmarkConfig.warmupS)
+    : 0;
 
   const [state, setState] = createStore<MutableGameState>({
     playerPosition: new Vec3(),
@@ -136,6 +219,9 @@ export function createGame(args: CreateGameArgs): GameState {
         computeTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
         gpuTimeMs: 0,
         gpuTimeHistory: Array.from({ length: FRAME_HISTORY_SIZE }, () => 0),
+        p95ComputeTimeMs: 0,
+        p95GpuTimeMs: 0,
+        visibleCreatures: 0,
         pointerLocked: false,
       },
       server: {
@@ -144,6 +230,14 @@ export function createGame(args: CreateGameArgs): GameState {
         snapsPerSec: 0,
         packetsPerSec: 0,
         timeOfDayS: 0,
+      },
+      benchmark: {
+        enabled: Boolean(benchmarkConfig),
+        active: false,
+        scene: benchmarkConfig?.scene ?? "open",
+        elapsedS: 0,
+        durationS: benchmarkEffectiveDurationS,
+        sampleCount: 0,
       },
     },
   });
@@ -158,6 +252,7 @@ export function createGame(args: CreateGameArgs): GameState {
   });
 
   const remotePlayers = createEntityPipeline(playerPipelineConfig);
+  const remoteCreatures = createEntityPipeline(creaturePipelineConfig);
   const fpsMeter = createRateMeter(FPS_WINDOW_MS);
   const snapMeter = createRateMeter(FPS_WINDOW_MS);
   const packetMeter = createRateMeter(FPS_WINDOW_MS);
@@ -177,8 +272,80 @@ export function createGame(args: CreateGameArgs): GameState {
   let renderedFoliageCount = 0;
   let renderedRockCount = 0;
   let lastRenderDistance = args.preferences.renderDistance();
+  let benchmarkActive = false;
+  let benchmarkTeleported = false;
+  let benchmarkStartedAtMs = 0;
+  const benchmarkSamples: BenchmarkSample[] = [];
+  let benchmarkSummary: BenchmarkSummary | undefined;
   // Lazy-initialized on the first frame where all signals have resolved.
   let ctx: { renderer: Renderer; camera: CameraController } | undefined;
+
+  const startBenchmark = () => {
+    if (!benchmarkConfig || benchmarkActive) return;
+    benchmarkActive = true;
+    benchmarkTeleported = false;
+    benchmarkStartedAtMs = performance.now();
+    benchmarkSamples.length = 0;
+    benchmarkSummary = undefined;
+    setState("diagnostics", "benchmark", {
+      enabled: true,
+      active: true,
+      scene: benchmarkConfig.scene,
+      elapsedS: 0,
+      durationS: benchmarkEffectiveDurationS,
+      sampleCount: 0,
+      summary: undefined,
+    });
+  };
+
+  const stopBenchmark = () => {
+    if (!benchmarkConfig || !benchmarkActive) return;
+    benchmarkActive = false;
+    benchmarkSummary = summarizeBenchmark(benchmarkConfig.scene, benchmarkEffectiveDurationS, benchmarkSamples);
+    const benchmarkRecord = {
+      config: benchmarkConfig,
+      summary: benchmarkSummary,
+      samples: [...benchmarkSamples],
+    };
+    // Expose latest benchmark to make report writing/debugging easier from DevTools.
+    (globalThis as { __minceraftBenchmarkLast?: unknown }).__minceraftBenchmarkLast = benchmarkRecord;
+    if (BENCHMARK_TERMINAL_OUTPUT_ENABLED) {
+      console.info("[benchmark] completed", benchmarkRecord);
+    }
+    setState("diagnostics", "benchmark", {
+      enabled: true,
+      active: false,
+      scene: benchmarkConfig.scene,
+      elapsedS: benchmarkEffectiveDurationS,
+      durationS: benchmarkEffectiveDurationS,
+      sampleCount: benchmarkSamples.length,
+      summary: benchmarkSummary,
+    });
+  };
+
+  const exportBenchmarkJson = () => {
+    if (!benchmarkConfig || !benchmarkSummary) return;
+    const payload = {
+      config: benchmarkConfig,
+      summary: benchmarkSummary,
+      samples: benchmarkSamples,
+    };
+    downloadTextFile(
+      `benchmark-${benchmarkConfig.scene}-${Date.now()}.json`,
+      JSON.stringify(payload, null, 2),
+      "application/json",
+    );
+  };
+
+  const exportBenchmarkCsv = () => {
+    if (!benchmarkConfig || !benchmarkSummary) return;
+    const summaryCsv = benchmarkSummaryToCsv(benchmarkSummary);
+    const samplesCsv = benchmarkSamplesToCsv(benchmarkSamples);
+    downloadTextFile(`benchmark-${benchmarkConfig.scene}-${Date.now()}-summary.csv`, summaryCsv, "text/csv");
+    downloadTextFile(`benchmark-${benchmarkConfig.scene}-${Date.now()}-samples.csv`, samplesCsv, "text/csv");
+  };
+
+  if (benchmarkConfig?.autoStart) startBenchmark();
 
   let latestHit: RaycastHit | null = null;
   let blockSeq = 1;
@@ -321,13 +488,28 @@ export function createGame(args: CreateGameArgs): GameState {
     }
 
     // --- Input → server ---
-    const mouse = inputEnabled() ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
+    const benchmarkInputLocked = benchmarkConfig?.disableInput && benchmarkActive;
+    const effectiveInputEnabled = inputEnabled() && !benchmarkInputLocked;
+    const mouse = effectiveInputEnabled ? input.consumeMouseDelta() : { dx: 0, dy: 0 };
     const mouseSensitivity = args.preferences.mouseSensitivity();
     const invertY = args.preferences.invertY() ? -1 : 1;
     camera.rotate(mouse.dx * mouseSensitivity, mouse.dy * mouseSensitivity * invertY);
     const keys = input.walkKeys();
-    const walk = inputEnabled() ? camera.walkDir(keys) : { x: 0, z: 0 };
-    const jump = inputEnabled() && keys.space;
+    const walk = effectiveInputEnabled ? camera.walkDir(keys) : { x: 0, z: 0 };
+    const jump = effectiveInputEnabled && keys.space;
+
+    if (benchmarkConfig && benchmarkActive) {
+      const elapsedS = (now - benchmarkStartedAtMs) / 1000;
+      if (!benchmarkTeleported) {
+        const [x, y, z] = BENCHMARK_SCENE_ANCHORS[benchmarkConfig.scene];
+        room().replicated()?.teleport({ x, y, z });
+        room().session()?.teleportTo(x, y, z);
+        room().session()?.setTimeOfDay(benchmarkConfig.fixedTimeOfDayS);
+        benchmarkTeleported = true;
+      }
+      const orbit = benchmarkOrbit(benchmarkConfig.scene, elapsedS);
+      camera.setOrientation(orbit.yaw, orbit.pitch);
+    }
     const yaw = camera.yaw();
     const pitch = camera.pitch();
     if (inputEnabled() && chunks.hasChunkAt(player.state.x, player.state.z)) {
@@ -394,6 +576,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
+      remoteCreatures.onSnapshot(unwrap(room().remoteCreatures), now);
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
@@ -429,11 +612,16 @@ export function createGame(args: CreateGameArgs): GameState {
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
+    const { buffers: creatureBuffers, count: creatureCount } = remoteCreatures.frame(now);
     const entities: EntityDrawData[] = [
       { key: "players", buffers, count },
+      { key: "creatures", buffers: creatureBuffers, count: creatureCount },
       { key: "placed-objects", buffers: placedObjectBuffers, count: renderedFoliageCount },
       { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
     ];
+    if (args.preferences.showMobHighlight() && creatureCount > 0) {
+      entities.push({ key: "creatures-highlight", buffers: creatureBuffers, count: creatureCount });
+    }
     renderer.render({
       viewMatrix,
       projMatrix,
@@ -468,6 +656,32 @@ export function createGame(args: CreateGameArgs): GameState {
     packetMeter.sample(dt, packetCount - lastPacketCount);
     lastPacketCount = packetCount;
 
+    if (benchmarkConfig && benchmarkActive) {
+      const elapsedS = (now - benchmarkStartedAtMs) / 1000;
+      const sampleElapsedS = elapsedS - benchmarkConfig.warmupS;
+      if (sampleElapsedS >= 0) {
+        benchmarkSamples.push({
+          elapsedS: sampleElapsedS,
+          computeTimeMs,
+          gpuTimeMs: benchmarkConfig.includeGpuTime ? gpuTimeMs : 0,
+          fps: fpsMeter.rate,
+          mspt: benchmarkConfig.includeServerTime ? tickInfo.tickTimeMs : 0,
+        });
+      }
+      setState("diagnostics", "benchmark", {
+        enabled: true,
+        active: true,
+        scene: benchmarkConfig.scene,
+        elapsedS: Math.max(0, sampleElapsedS),
+        durationS: benchmarkEffectiveDurationS,
+        sampleCount: benchmarkSamples.length,
+        summary: undefined,
+      });
+      if (elapsedS >= benchmarkConfig.durationS) {
+        stopBenchmark();
+      }
+    }
+
     setState("playerPosition", player.position);
     setState("diagnostics", "client", {
       fps: fpsMeter.rate,
@@ -476,6 +690,9 @@ export function createGame(args: CreateGameArgs): GameState {
       computeTimeHistory: computeHistory.ordered(),
       gpuTimeMs,
       gpuTimeHistory: gpuHistory.ordered(),
+      p95ComputeTimeMs: computeP95(computeHistory.ordered()),
+      p95GpuTimeMs: computeP95(gpuHistory.ordered()),
+      visibleCreatures: creatureCount,
       pointerLocked: input.pointerLocked(),
     });
     setState("diagnostics", "server", {
@@ -493,6 +710,14 @@ export function createGame(args: CreateGameArgs): GameState {
     },
     get diagnostics() {
       return state.diagnostics;
+    },
+    benchmark: {
+      canRun: Boolean(benchmarkConfig),
+      active: () => benchmarkActive,
+      start: startBenchmark,
+      stop: stopBenchmark,
+      exportJson: exportBenchmarkJson,
+      exportCsv: exportBenchmarkCsv,
     },
     minimap: {
       terrainVersion,

@@ -9,6 +9,7 @@ import { PauseMenu } from "../components/PauseMenu";
 import { PlayerHud } from "../components/PlayerHud";
 import { SettingsMenu } from "../components/SettingsMenu";
 import { createGame, requestPointerLock } from "../engine";
+import { parseBenchmarkConfig } from "../primitives";
 import { createGameplayPreferences } from "../primitives/gameplay-preferences";
 import { createGameplayUiState } from "../primitives/gameplay-ui-state";
 import { joinWorld } from "../primitives/join-world";
@@ -29,18 +30,23 @@ export default function GameView() {
     setInvertY,
     setRenderDistance,
     setShowDiagnostics,
+    setShowMobHighlight,
   } = createGameplayPreferences();
   const ui = createGameplayUiState();
+  const benchmarkConfig =
+    typeof window !== "undefined" ? parseBenchmarkConfig(window.location.search) : parseBenchmarkConfig("");
 
   const anyOverlayOpen = () => ui.pauseMenuOpen() || ui.settingsOpen() || ui.deathScreenOpen();
 
   const game = createGame({
     glCanvas,
     room,
+    benchmark: benchmarkConfig,
     preferences: {
       mouseSensitivity: () => preferences.mouseSensitivity,
       invertY: () => preferences.invertY,
       renderDistance: () => preferences.renderDistance,
+      showMobHighlight: () => preferences.showMobHighlight,
     },
     inputEnabled: () => !inventoryOpen() && !anyOverlayOpen(),
     shortcuts: {
@@ -48,6 +54,7 @@ export default function GameView() {
       onCloseInventory: closeInventory,
       onToggleHud: () => setHudHidden((hidden) => !hidden),
       onToggleDebug: () => setDebugVisible((visible) => !visible),
+      onToggleMobHighlight: () => setShowMobHighlight(!preferences.showMobHighlight),
       onSelectHotbarSlot: selectHotbarSlot,
       onCycleHotbar: (direction) => {
         const player = room.player();
@@ -147,6 +154,7 @@ export default function GameView() {
           onInvertYInput={setInvertY}
           onRenderDistanceInput={setRenderDistance}
           onShowDiagnosticsInput={setShowDiagnostics}
+          onShowMobHighlightInput={setShowMobHighlight}
         />
       </Show>
       <Show when={ui.deathScreenOpen()}>
@@ -188,11 +196,19 @@ export default function GameView() {
             computeTimeHistory={game.diagnostics.client.computeTimeHistory}
             gpuTimeMs={game.diagnostics.client.gpuTimeMs}
             gpuTimeHistory={game.diagnostics.client.gpuTimeHistory}
+            p95ComputeTimeMs={game.diagnostics.client.p95ComputeTimeMs}
+            p95GpuTimeMs={game.diagnostics.client.p95GpuTimeMs}
+            visibleCreatures={game.diagnostics.client.visibleCreatures}
             mspt={game.diagnostics.server.mspt}
             msptHistory={game.diagnostics.server.msptHistory}
             snapsPerSec={game.diagnostics.server.snapsPerSec}
             packetsPerSec={game.diagnostics.server.packetsPerSec}
             timeOfDayS={game.diagnostics.server.timeOfDayS}
+            benchmark={game.diagnostics.benchmark}
+            onBenchmarkStart={game.benchmark.canRun ? game.benchmark.start : undefined}
+            onBenchmarkStop={game.benchmark.canRun ? game.benchmark.stop : undefined}
+            onBenchmarkExportJson={game.benchmark.canRun ? game.benchmark.exportJson : undefined}
+            onBenchmarkExportCsv={game.benchmark.canRun ? game.benchmark.exportCsv : undefined}
             onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
             onlinePlayers={Object.values(room.remotePlayers)}
             onTeleportTo={(id) => {

@@ -21,6 +21,8 @@ export interface EntityPassDef {
   };
   instancedAttributes: { name: string; size: number }[];
   cullFace?: boolean;
+  depthTest?: boolean;
+  blendAlpha?: boolean;
 }
 
 export interface EntityDrawData {

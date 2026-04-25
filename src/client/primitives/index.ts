@@ -1,4 +1,16 @@
 export { createHeldCodes } from "./held-codes";
+export type {
+	BenchmarkConfig,
+	BenchmarkSample,
+	BenchmarkScene,
+	BenchmarkSummary,
+} from "./benchmark";
+export {
+	benchmarkSamplesToCsv,
+	benchmarkSummaryToCsv,
+	parseBenchmarkConfig,
+	summarizeBenchmark,
+} from "./benchmark";
 export { createPageVisibility } from "./page-visibility";
 export type { RateMeter } from "./rate-meter";
 export { createRateMeter } from "./rate-meter";

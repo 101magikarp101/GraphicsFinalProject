@@ -9,6 +9,7 @@ import type { ChunkGen } from "../server/chunk-gen";
 import * as schema from "../server/schema";
 import { BlockSystem, type BlockSystemOptions } from "./block-system";
 import { ChunkStorage } from "./chunk-storage";
+import { CreatureSystem } from "./creature-system";
 import type { InventoryClickTarget } from "./crafting";
 import { FluidSystem } from "./fluid-system";
 import type { GameSystem } from "./game-system";
@@ -80,6 +81,7 @@ export class GameRoom extends DurableObject<Env> {
   alarms: Alarms<this>;
   private playerSystem = new PlayerSystem();
   private blockSystem!: BlockSystem;
+  private creatureSystem!: CreatureSystem;
   private chunkStorage!: ChunkStorage;
   private systems!: GameSystem[];
   private listeners = new Map<string, TickListener>();
@@ -127,8 +129,9 @@ export class GameRoom extends DurableObject<Env> {
     this.chunkStorage.hydrate(seed);
 
     this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
+    this.creatureSystem = new CreatureSystem(this.chunkStorage, this.playerSystem);
     const fluidSystem = new FluidSystem(this.chunkStorage);
-    this.systems = [this.playerSystem, this.blockSystem, fluidSystem];
+    this.systems = [this.playerSystem, this.blockSystem, this.creatureSystem, fluidSystem];
 
     for (const system of this.systems) {
       system.hydrate(this.db);
@@ -166,6 +169,7 @@ export class GameRoom extends DurableObject<Env> {
     this.sessionTokens.set(playerId, token);
     this.lastAckTimeMs.set(playerId, Date.now());
     this.blockSystem.onPlayerJoin(playerId);
+    this.creatureSystem.setOnlinePlayers(this.listeners.keys());
     this.needsBroadcast = true;
     this.startTickLoop();
     console.log(`[GameRoom] ${playerId} joined the room (session ${token})`);
@@ -294,6 +298,7 @@ export class GameRoom extends DurableObject<Env> {
     this.lastAckTimeMs.delete(playerId);
     this.sessionTokens.delete(playerId);
     this.blockSystem?.onPlayerLeave(playerId);
+    this.creatureSystem?.setOnlinePlayers(this.listeners.keys());
     this.playerSystem.leave(playerId);
     this.needsBroadcast = true;
   }
@@ -321,6 +326,7 @@ export class GameRoom extends DurableObject<Env> {
     this.tickRunning = true;
     try {
       this.ensureInitialized();
+      this.creatureSystem.setOnlinePlayers(this.listeners.keys());
 
       const tickStart = performance.now();
       this.gameTick++;
@@ -444,6 +450,7 @@ export class GameRoom extends DurableObject<Env> {
     this.lastAckTimeMs.delete(playerId);
     this.sessionTokens.delete(playerId);
     this.blockSystem?.onPlayerLeave(playerId);
+    this.creatureSystem?.setOnlinePlayers(this.listeners.keys());
     this.playerSystem.leave(playerId);
     this.needsBroadcast = true;
   }

@@ -1,4 +1,5 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
+import type { CreaturePublicState } from "./creature";
 import type { PlacedObject, PlacedObjectType } from "./object-placement";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
 
@@ -82,6 +83,24 @@ export interface WorldStatePacket {
   timeOfDayS: number;
 }
 
+/** Initial snapshot for creatures newly visible to the receiving client. */
+export interface CreatureSpawnPacket {
+  type: "creatureSpawn";
+  creatures: CreaturePublicState[];
+}
+
+/** Per-tick creature updates for currently visible creatures. */
+export interface CreatureStatePacket {
+  type: "creatureState";
+  creatures: CreaturePublicState[];
+}
+
+/** Creature IDs that should be removed from the client replica set. */
+export interface CreatureDespawnPacket {
+  type: "creatureDespawn";
+  ids: string[];
+}
+
 /** Discriminated union of every packet the server may send to a client. */
 export type ServerPacket =
   | PlayersPacket
@@ -90,6 +109,9 @@ export type ServerPacket =
   | ReconcilePacket
   | InventoryUiPacket
   | WorldStatePacket
+  | CreatureSpawnPacket
+  | CreatureStatePacket
+  | CreatureDespawnPacket
   | BlockAckPacket
   | BlockChangesPacket
   | ChunkDataPacket;

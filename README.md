@@ -29,3 +29,8 @@ To lint and format:
 ```bash
 bun lint:fix
 ```
+
+(vincent)
+bun install
+bun run build
+bun dev

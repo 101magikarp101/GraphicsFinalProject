@@ -12,6 +12,7 @@ interface SettingsMenuProps {
   onInvertYInput: (value: boolean) => void;
   onRenderDistanceInput: (value: number) => void;
   onShowDiagnosticsInput: (value: boolean) => void;
+  onShowMobHighlightInput: (value: boolean) => void;
 }
 
 export function SettingsMenu(props: SettingsMenuProps) {
@@ -74,6 +75,15 @@ export function SettingsMenu(props: SettingsMenuProps) {
               description="Show FPS, TPS, and online player diagnostics."
               label="Show diagnostics"
               onInput={props.onShowDiagnosticsInput}
+            />
+          </SettingCard>
+
+          <SettingCard label="Mobs">
+            <ToggleRow
+              checked={props.preferences.showMobHighlight}
+              description="Show creature highlights through walls."
+              label="Highlight mobs"
+              onInput={props.onShowMobHighlightInput}
             />
           </SettingCard>
         </div>
