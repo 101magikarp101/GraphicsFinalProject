@@ -1,6 +1,8 @@
 import { createEventListener } from "@solid-primitives/event-listener";
 import { createEffect, createSignal, on, Show } from "solid-js";
+import type { CreatureSpeciesId } from "@/game/creature-species";
 import { HOTBAR_SLOT_COUNT } from "@/game/player";
+import { BattleHud } from "../components/BattleHud";
 import { DeathScreen } from "../components/DeathScreen";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { InventoryPanel } from "../components/InventoryPanel";
@@ -8,6 +10,7 @@ import { Minimap } from "../components/Minimap";
 import { PauseMenu } from "../components/PauseMenu";
 import { PlayerHud } from "../components/PlayerHud";
 import { SettingsMenu } from "../components/SettingsMenu";
+import { StarterSelectionOverlay } from "../components/StarterSelectionOverlay";
 import { createGame, requestPointerLock } from "../engine";
 import { parseBenchmarkConfig } from "../primitives";
 import { createGameplayPreferences } from "../primitives/gameplay-preferences";
@@ -36,7 +39,10 @@ export default function GameView() {
   const benchmarkConfig =
     typeof window !== "undefined" ? parseBenchmarkConfig(window.location.search) : parseBenchmarkConfig("");
 
+  const battleActive = () => Boolean(room.battleState()?.active);
+  const needsStarterChoice = () => !room.starterState();
   const anyOverlayOpen = () => ui.pauseMenuOpen() || ui.settingsOpen() || ui.deathScreenOpen();
+  const interactionBlocked = () => inventoryOpen() || anyOverlayOpen() || battleActive() || needsStarterChoice();
 
   const game = createGame({
     glCanvas,
@@ -48,7 +54,7 @@ export default function GameView() {
       renderDistance: () => preferences.renderDistance,
       showMobHighlight: () => preferences.showMobHighlight,
     },
-    inputEnabled: () => !inventoryOpen() && !anyOverlayOpen(),
+    inputEnabled: () => !interactionBlocked(),
     shortcuts: {
       onToggleInventory: toggleInventory,
       onCloseInventory: closeInventory,
@@ -80,7 +86,7 @@ export default function GameView() {
   );
 
   createEffect(() => {
-    if (!anyOverlayOpen()) return;
+    if (!interactionBlocked()) return;
     document.exitPointerLock?.();
   });
 
@@ -108,7 +114,7 @@ export default function GameView() {
   }
 
   function openInventory() {
-    if (inventoryOpen() || anyOverlayOpen()) return;
+    if (interactionBlocked()) return;
     setInventoryOpen(true);
     void document.exitPointerLock?.();
   }
@@ -117,7 +123,9 @@ export default function GameView() {
     if (!inventoryOpen()) return;
     setInventoryOpen(false);
     room.session()?.closeInventory();
-    void requestPointerLock(glCanvas());
+    if (!interactionBlocked()) {
+      void requestPointerLock(glCanvas());
+    }
   }
 
   function toggleInventory() {
@@ -126,6 +134,14 @@ export default function GameView() {
     } else {
       openInventory();
     }
+  }
+
+  function chooseStarter(speciesId: CreatureSpeciesId) {
+    room.session()?.chooseStarter(speciesId);
+  }
+
+  function chooseBattleMove(moveId: string) {
+    room.session()?.chooseBattleMove(moveId);
   }
 
   return (
@@ -162,12 +178,12 @@ export default function GameView() {
       </Show>
       <Show when={!hudHidden()}>
         <Minimap
-          hidden={inventoryOpen() || anyOverlayOpen()}
+          hidden={interactionBlocked()}
           minimap={game.minimap}
           player={room.player}
           players={() => room.remotePlayers}
         />
-        <Show when={!inventoryOpen() && !anyOverlayOpen()}>
+        <Show when={!interactionBlocked()}>
           <div class="pointer-events-none absolute inset-0 z-20">
             <div class="absolute top-1/2 left-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2">
               <div class="absolute top-1/2 left-0 h-px w-full -translate-y-1/2 bg-white/85 shadow-[0_0_4px_rgba(0,0,0,0.7)]" />
@@ -176,7 +192,7 @@ export default function GameView() {
           </div>
         </Show>
         <PlayerHud
-          hidden={inventoryOpen() || anyOverlayOpen()}
+          hidden={interactionBlocked()}
           onSelectHotbarSlot={selectHotbarSlot}
           player={room.player}
         />
@@ -187,6 +203,12 @@ export default function GameView() {
         open={inventoryOpen()}
         onClickSlot={(target) => room.session()?.clickInventory(target)}
       />
+      <Show when={room.battleState()}>
+        {(battle) => <BattleHud battle={battle()} onSelectMove={chooseBattleMove} />}
+      </Show>
+      <Show when={needsStarterChoice()}>
+        <StarterSelectionOverlay onSelectStarter={chooseStarter} disabled={!room.session()} />
+      </Show>
       <Show when={(debugVisible() || preferences.showDiagnostics) && room.player()?.state}>
         {(playerState) => (
           <DiagnosticsPanel

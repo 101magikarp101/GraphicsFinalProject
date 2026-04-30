@@ -4,6 +4,13 @@ vincent:
 	bun run build
 	bun dev
 
+reset-db:
+	git clean -f drizzle/meta/*.json
+	if exist *.sqlite del /Q *.sqlite
+	echo Database reset. Re-run migrations to initialize schema.
+
+fresh-start: vincent reset-db
+
 MSG := $(strip $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)))
 FOLDER := $(MSG)
 SCRIPTS_DIR := scripts

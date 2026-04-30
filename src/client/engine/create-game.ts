@@ -9,6 +9,7 @@ import type { CreaturePublicState } from "@/game/creature";
 import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
+import { findTargetedCreatureId } from "@/game/creature-targeting";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import {
@@ -364,6 +365,15 @@ export function createGame(args: CreateGameArgs): GameState {
     if (player && camera) {
       const yaw = camera.yaw();
       const pitch = camera.pitch();
+      const targetedCreatureId = findTargetedCreatureId(
+        { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
+        remoteCreatures.states(performance.now()),
+      );
+      if (targetedCreatureId && !room().battleState()?.active && room().starterState()) {
+        s.startBattle(targetedCreatureId);
+        return;
+      }
+
       const targetPlayerId = findTargetedPlayerId(
         { x: player.state.x, y: player.state.y, z: player.state.z, yaw, pitch },
         remotePlayers.states(performance.now()),

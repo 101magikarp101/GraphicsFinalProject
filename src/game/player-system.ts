@@ -34,8 +34,63 @@ import {
 } from "./player";
 import { canTargetPlayer } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
+import { serverLog } from "./logging";
 
-const SPAWN_POSITION = { x: 0, y: 70, z: 20, yaw: 0, pitch: 0 };
+import { sampleColumn } from "./biome";
+
+// Returns the spawn position at the first solid, walkable block at (0, 20) using the world seed.
+import { CHUNK_SIZE, Chunk, CHUNK_HEIGHT, chunkOrigin } from "./chunk";
+import { CubeType } from "@/client/engine/render/cube-types";
+
+interface SpawnChunkProvider {
+  getChunk(originX: number, originZ: number): Chunk | null;
+}
+
+const SPAWN_X = 0;
+const SPAWN_Z = 20;
+const spawnPositionCache = new Map<number, { x: number; y: number; z: number; yaw: number; pitch: number }>();
+
+function getSpawnPosition(seed: number, chunkStorage?: SpawnChunkProvider) {
+  const cached = spawnPositionCache.get(seed);
+  if (cached) return { ...cached };
+
+  const generatedChunks = new Map<string, Chunk>();
+
+  const getChunkForWorld = (wx: number, wz: number): { chunk: Chunk; localX: number; localZ: number } => {
+    const [originX, originZ] = chunkOrigin(wx, wz);
+    const key = `${originX},${originZ}`;
+
+    let chunk = chunkStorage?.getChunk(originX, originZ) ?? generatedChunks.get(key);
+    if (!chunk) {
+      chunk = new Chunk(originX, originZ, CHUNK_SIZE, seed, true);
+      generatedChunks.set(key, chunk);
+    }
+
+    return {
+      chunk,
+      localX: wx - (originX - CHUNK_SIZE / 2),
+      localZ: wz - (originZ - CHUNK_SIZE / 2),
+    };
+  };
+
+  const { chunk, localX, localZ } = getChunkForWorld(SPAWN_X, SPAWN_Z);
+  let topY = -1;
+  for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+    const block = chunk.getBlock(localX, y, localZ);
+    if (block !== CubeType.Air) {
+      topY = y;
+      break;
+    }
+  }
+
+  // Keep compatibility with existing terrain-profile spawn height while never
+  // allowing a cave spawn: choose whichever is higher.
+  const { height } = sampleColumn(seed, SPAWN_X, SPAWN_Z);
+  const spawnY = Math.max(height + 1, topY + 1);
+  const computed = { x: SPAWN_X, y: spawnY, z: SPAWN_Z, yaw: 0, pitch: 0 };
+  spawnPositionCache.set(seed, computed);
+  return { ...computed };
+}
 const BASE_MOVEMENT_WINDOW_MS = 100;
 const MOVEMENT_TOLERANCE = 3;
 const DEATH_Y_THRESHOLD = -20;
@@ -95,7 +150,7 @@ export class PlayerSystem implements GameSystem {
   }
 
   /** Adds a new player at the spawn position if they aren't already tracked. */
-  join(playerId: string, name: string): void {
+  join(playerId: string, name: string, seed: number, chunkStorage?: SpawnChunkProvider): void {
     if (!this.players.has(playerId)) {
       this.players.set(
         playerId,
@@ -103,7 +158,7 @@ export class PlayerSystem implements GameSystem {
           createPlayerState({
             id: playerId,
             name,
-            ...SPAWN_POSITION,
+            ...getSpawnPosition(seed, chunkStorage),
           }),
         ),
       );
@@ -113,7 +168,7 @@ export class PlayerSystem implements GameSystem {
     this.inventoryUi.set(playerId, createInventoryUiState());
     this.pendingReconcile.add(playerId);
 
-    console.log(`Player ${name} joined room`);
+    serverLog(`Player ${name} joined room`);
   }
 
   /** Clears the departing player's input queue; their state remains for persistence. */
@@ -128,7 +183,7 @@ export class PlayerSystem implements GameSystem {
     this.pendingReconcile.delete(playerId);
     this.pendingSelfStateSync.delete(playerId);
 
-    console.log(`Player ${player?.state.name} left room`);
+    serverLog(`Player ${player?.state.name} left room`);
   }
 
   /**
@@ -495,7 +550,7 @@ export class PlayerSystem implements GameSystem {
     return dx * dx + dz * dz <= maxHorizontal * maxHorizontal && Math.abs(dy) <= maxVertical;
   }
 
-  respawn(playerId: string): boolean {
+  respawn(playerId: string, seed: number, chunkStorage?: SpawnChunkProvider): boolean {
     const player = this.players.get(playerId);
     if (!player) return false;
 
@@ -504,7 +559,7 @@ export class PlayerSystem implements GameSystem {
       createPlayerState({
         id: player.id,
         name: player.state.name,
-        ...SPAWN_POSITION,
+        ...getSpawnPosition(seed, chunkStorage),
       }),
     );
     this.inventoryUi.set(playerId, createInventoryUiState());

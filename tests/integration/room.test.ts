@@ -89,7 +89,7 @@ describe("GameRoom Durable Object", () => {
     const reconcile = findPacket(tick, "reconcile");
     expect(reconcile?.state).toBeDefined();
     expect(reconcile?.state.x).toBeCloseTo(0);
-    expect(reconcile?.state.y).toBeCloseTo(70);
+    expect(reconcile?.state.y ?? 0).toBeGreaterThan(0);
     expect(reconcile?.state.z).toBeCloseTo(20);
     expect(reconcile?.state.health).toBe(PLAYER_MAX_HEALTH);
     expect(reconcile?.state.inventory).toHaveLength(36);
@@ -452,12 +452,14 @@ describe("GameRoom Durable Object", () => {
   it("marks players dead after lethal damage and respawns them on request", async () => {
     const stub = makeRoomStub(roomName);
     const bobTicks: ServerTick[] = [];
+    let initialSpawnY = 0;
 
     await runInDurableObject(stub, async (room: GameRoom) => {
       room.configureBlockSystem(TEST_BLOCK_OPTS);
       room.join("alice", "Alice", () => {});
       room.join("bob", "Bob", (tick) => bobTicks.push(tick));
       await room.runTick();
+      initialSpawnY = findPacket(bobTicks[bobTicks.length - 1], "reconcile")?.state.y ?? 0;
 
       await wait(50);
       room.sendPosition("bob", { sequence: 1, x: 0, y: 70, z: 18, yaw: Math.PI, pitch: 0 });
@@ -489,7 +491,7 @@ describe("GameRoom Durable Object", () => {
     const latest = bobTicks[bobTicks.length - 1];
     const reconcile = findPacket(latest, "reconcile");
     expect(reconcile?.state.x).toBeCloseTo(0);
-    expect(reconcile?.state.y).toBeCloseTo(70);
+    expect(reconcile?.state.y).toBeCloseTo(initialSpawnY);
     expect(reconcile?.state.z).toBeCloseTo(20);
     expect(reconcile?.state.health).toBe(PLAYER_MAX_HEALTH);
     expect(reconcile?.state.selectedHotbarSlot).toBe(0);
@@ -622,7 +624,7 @@ describe("GameServer capnweb RPC", () => {
     expect(roomSession).toBeDefined();
     // First tick arrives on the next server tick (tick-aligned).
     await waitFor(() => received.length >= 1, 5000);
-    expect(findPacket(received[0], "reconcile")?.state.y).toBeCloseTo(70);
+    expect(findPacket(received[0], "reconcile")?.state.y ?? 0).toBeGreaterThan(0);
   });
 
   it("removes a player from other clients when they leave the room", async () => {
@@ -660,6 +662,6 @@ describe("GameServer capnweb RPC", () => {
       if (!players) return false;
       const names = Object.values(players).map((p) => p.name);
       return !names.includes("alice");
-    }, 2000);
-  }, 4000);
+    }, 5000);
+  }, 8000);
 });

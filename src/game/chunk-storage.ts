@@ -5,6 +5,7 @@ import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey, chunkOrigin, decodeBlocks, encodeBlocks } from "@/game/chunk";
 import type { ChunkGen } from "@/server/chunk-gen";
 import * as schema from "@/server/schema";
+import { serverError, serverLog } from "./logging";
 
 export interface BlockMutation {
   action: "place" | "break";
@@ -33,13 +34,11 @@ interface ChunkEntry {
   encodedFluidLevels: Uint8Array | undefined;
 }
 
-/** Cap on in-memory chunks. Each chunk is 512KB (Uint8Array of CHUNK_SIZE²·CHUNK_HEIGHT). */
 const MAX_MEMORY_CHUNKS = 121;
 
 /** World-space deltas to the 4 cardinal neighbour chunks. */
 const CARDINAL_CHUNK_DELTAS = [
   [CHUNK_SIZE, 0],
-  [-CHUNK_SIZE, 0],
   [0, CHUNK_SIZE],
   [0, -CHUNK_SIZE],
 ] as const;
@@ -318,7 +317,7 @@ export class ChunkStorage {
       .values({ key, data, fluidLevels })
       .onConflictDoUpdate({ target: schema.chunks.key, set: { data, fluidLevels } })
       .run();
-    console.log(`[ChunkStorage] Flushed chunk ${key} to database`);
+    serverLog(`[ChunkStorage] Flushed chunk ${key} to database`);
   }
 
   private writeBlock(wx: number, wy: number, wz: number, blockType: CubeType): void {
@@ -356,13 +355,13 @@ export class ChunkStorage {
         this.primeFluidBoundaries(originX, originZ);
         return true;
       } catch (err) {
-        console.error(`Failed to decode chunk (${originX}, ${originZ}) from SQLite, will regenerate:`, err);
+        serverError(`Failed to decode chunk (${originX}, ${originZ}) from SQLite, will regenerate:`, err);
         this.db.delete(schema.chunks).where(eq(schema.chunks.key, key)).run();
       }
     }
 
     if (this.chunkGen) {
-      console.log(`[ChunkStorage] Generating chunk at (${originX}, ${originZ}) via ChunkGen`);
+      serverLog(`[ChunkStorage] Generating chunk at (${originX}, ${originZ}) via ChunkGen`);
       const encoded = await this.chunkGen.generateChunk(originX, originZ, this.seed);
       const blocks = decodeBlocks(encoded);
       const chunk = new Chunk(originX, originZ, CHUNK_SIZE, this.seed, true, { blocks });

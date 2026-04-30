@@ -1,7 +1,9 @@
 import type { InventoryClickTarget, InventoryUiState } from "./crafting";
+import type { BattleSessionState, StarterCreatureState } from "./battle";
 import type { CreaturePublicState } from "./creature";
 import type { PlacedObject, PlacedObjectType } from "./object-placement";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
+import type { CreatureSpeciesId } from "./creature-species";
 
 /** Credentials returned after successful authentication. */
 export interface PlayerCredentials {
@@ -101,6 +103,18 @@ export interface CreatureDespawnPacket {
   ids: string[];
 }
 
+/** Starter-creature progress for the receiving player, if selected. */
+export interface StarterStatePacket {
+  type: "starterState";
+  starter: StarterCreatureState | null;
+}
+
+/** Turn-based battle state for the receiving player, if in battle. */
+export interface BattleStatePacket {
+  type: "battleState";
+  battle: BattleSessionState | null;
+}
+
 /** Discriminated union of every packet the server may send to a client. */
 export type ServerPacket =
   | PlayersPacket
@@ -112,6 +126,8 @@ export type ServerPacket =
   | CreatureSpawnPacket
   | CreatureStatePacket
   | CreatureDespawnPacket
+  | StarterStatePacket
+  | BattleStatePacket
   | BlockAckPacket
   | BlockChangesPacket
   | ChunkDataPacket;
@@ -146,6 +162,12 @@ export interface RoomSessionApi {
   attack(packet: PlayerAttackPacket): void;
   /** Sets the server-authoritative time of day (seconds within the day cycle). */
   setTimeOfDay(timeS: number): void;
+  /** Selects the player's starter creature the first time they join. */
+  chooseStarter(speciesId: CreatureSpeciesId): void;
+  /** Starts a wild encounter against a targeted wild creature. */
+  startBattle(creatureId: string): void;
+  /** Submits the selected move for the current battle turn. */
+  chooseBattleMove(moveId: string): void;
   /** Leaves the room and disposes the session. */
   leave(): void;
 }

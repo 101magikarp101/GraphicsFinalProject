@@ -10,11 +10,14 @@ import * as schema from "../server/schema";
 import { BlockSystem, type BlockSystemOptions } from "./block-system";
 import { ChunkStorage } from "./chunk-storage";
 import { CreatureSystem } from "./creature-system";
+import { BattleSystem } from "./battle-system";
 import type { InventoryClickTarget } from "./crafting";
 import { FluidSystem } from "./fluid-system";
 import type { GameSystem } from "./game-system";
+import { serverLog, serverWarn } from "./logging";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
 import { PlayerSystem } from "./player-system";
+import type { CreatureSpeciesId } from "./creature-species";
 import type {
   AuthenticatedApi,
   GameApi,
@@ -82,6 +85,7 @@ export class GameRoom extends DurableObject<Env> {
   private playerSystem = new PlayerSystem();
   private blockSystem!: BlockSystem;
   private creatureSystem!: CreatureSystem;
+  private battleSystem!: BattleSystem;
   private chunkStorage!: ChunkStorage;
   private systems!: GameSystem[];
   private listeners = new Map<string, TickListener>();
@@ -130,26 +134,31 @@ export class GameRoom extends DurableObject<Env> {
 
     this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
     this.creatureSystem = new CreatureSystem(this.chunkStorage, this.playerSystem);
+    this.battleSystem = new BattleSystem(this.playerSystem, this.creatureSystem);
     const fluidSystem = new FluidSystem(this.chunkStorage);
-    this.systems = [this.playerSystem, this.blockSystem, this.creatureSystem, fluidSystem];
+    this.systems = [this.playerSystem, this.blockSystem, this.creatureSystem, this.battleSystem, fluidSystem];
 
     for (const system of this.systems) {
       system.hydrate(this.db);
     }
-    console.log("GameRoom initialized");
+    serverLog("GameRoom initialized");
   }
 
   private getOrCreateSeed(): number {
-    const row = this.db.select().from(schema.roomConfig).where(eq(schema.roomConfig.key, "seed")).get();
-    if (row) return Number(row.value);
-
-    const seed = Math.floor(Math.random() * 2147483647);
-    this.db
-      .insert(schema.roomConfig)
-      .values({ key: "seed", value: String(seed) })
-      .run();
-    return seed;
+    return 101000;
   }
+
+  // private getOrCreateSeed(): number {
+  //   const row = this.db.select().from(schema.roomConfig).where(eq(schema.roomConfig.key, "seed")).get();
+  //   if (row) return Number(row.value);
+
+  //   const seed = Math.floor(Math.random() * 2147483647);
+  //   this.db
+  //     .insert(schema.roomConfig)
+  //     .values({ key: "seed", value: String(seed) })
+  //     .run();
+  //   return seed;
+  // }
 
   /**
    * Registers a new player and queues a broadcast for the next tick.
@@ -157,7 +166,8 @@ export class GameRoom extends DurableObject<Env> {
    */
   join(playerId: string, name: string, onTick: TickListener): number {
     this.ensureInitialized();
-    this.playerSystem.join(playerId, name);
+    const seed = this.getOrCreateSeed();
+    this.playerSystem.join(playerId, name, seed, this.chunkStorage);
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
     const token = this.nextSessionToken++;
@@ -172,7 +182,7 @@ export class GameRoom extends DurableObject<Env> {
     this.creatureSystem.setOnlinePlayers(this.listeners.keys());
     this.needsBroadcast = true;
     this.startTickLoop();
-    console.log(`[GameRoom] ${playerId} joined the room (session ${token})`);
+    serverLog(`[GameRoom] ${playerId} joined the room (session ${token})`);
     return token;
   }
 
@@ -264,6 +274,30 @@ export class GameRoom extends DurableObject<Env> {
     this.needsBroadcast = true;
   }
 
+  chooseStarter(playerId: string, speciesId: CreatureSpeciesId) {
+    this.ensureInitialized();
+    this.ensureJoined(playerId);
+    if (this.battleSystem.chooseStarter(playerId, speciesId)) {
+      this.needsBroadcast = true;
+    }
+  }
+
+  startBattle(playerId: string, creatureId: string) {
+    this.ensureInitialized();
+    this.ensureJoined(playerId);
+    if (this.battleSystem.startBattle(playerId, creatureId)) {
+      this.needsBroadcast = true;
+    }
+  }
+
+  chooseBattleMove(playerId: string, moveId: string) {
+    this.ensureInitialized();
+    this.ensureJoined(playerId);
+    if (this.battleSystem.chooseBattleMove(playerId, moveId)) {
+      this.needsBroadcast = true;
+    }
+  }
+
   /** Teleports a player to the given coordinates. */
   teleportTo(playerId: string, x: number, y: number, z: number) {
     this.ensureInitialized();
@@ -277,7 +311,8 @@ export class GameRoom extends DurableObject<Env> {
   respawn(playerId: string) {
     this.ensureInitialized();
     this.ensureJoined(playerId);
-    if (this.playerSystem.respawn(playerId)) {
+    const seed = this.getOrCreateSeed();
+    if (this.playerSystem.respawn(playerId, seed, this.chunkStorage)) {
       this.needsBroadcast = true;
     }
   }
@@ -289,10 +324,10 @@ export class GameRoom extends DurableObject<Env> {
    */
   leave(playerId: string, sessionToken?: number) {
     if (sessionToken !== undefined && this.sessionTokens.get(playerId) !== sessionToken) {
-      console.log(`[GameRoom] ignoring stale leave(${playerId}, session ${sessionToken})`);
+      serverLog(`[GameRoom] ignoring stale leave(${playerId}, session ${sessionToken})`);
       return;
     }
-    console.log(`[GameRoom] ${playerId} left the room`);
+    serverLog(`[GameRoom] ${playerId} left the room`);
     this.removeListener(playerId);
     this.lastInputTime.delete(playerId);
     this.lastAckTimeMs.delete(playerId);
@@ -332,7 +367,7 @@ export class GameRoom extends DurableObject<Env> {
       this.gameTick++;
 
       if (this.lastTickTime > 0 && tickStart - this.lastTickTime > TICK_MS * 2) {
-        console.warn(`Tick ${this.gameTick} scheduled ${tickStart - this.lastTickTime - TICK_MS}ms late`);
+        serverWarn(`Tick ${this.gameTick} scheduled ${tickStart - this.lastTickTime - TICK_MS}ms late`);
       }
 
       for (const system of this.systems) {
@@ -340,7 +375,7 @@ export class GameRoom extends DurableObject<Env> {
         const changed = await system.tick();
         const tickMs = performance.now() - tickStart;
         if (tickMs > 20) {
-          console.warn(`System ${system.constructor.name} tick took ${tickMs.toFixed(1)}ms`);
+          serverWarn(`System ${system.constructor.name} tick took ${tickMs.toFixed(1)}ms`);
         }
 
         if (changed) this.needsBroadcast = true;
@@ -361,11 +396,11 @@ export class GameRoom extends DurableObject<Env> {
       }
 
       if (this.lastTickTimeMs > TICK_MS) {
-        console.warn(`Tick ${this.gameTick} took ${this.lastTickTimeMs.toFixed(1)}ms`);
+        serverWarn(`Tick ${this.gameTick} took ${this.lastTickTimeMs.toFixed(1)}ms`);
       }
 
       if (performance.now() - flushTickStart > 10) {
-        console.warn(`Tick ${this.gameTick} flush took ${(performance.now() - flushTickStart).toFixed(1)}ms`);
+        serverWarn(`Tick ${this.gameTick} flush took ${(performance.now() - flushTickStart).toFixed(1)}ms`);
       }
     } finally {
       this.tickRunning = false;
@@ -422,7 +457,7 @@ export class GameRoom extends DurableObject<Env> {
         continue;
       }
       if (now - lastAck > UNRESPONSIVE_TIMEOUT_MS && !broken.includes(id)) {
-        console.warn(`[GameRoom] kicking ${id}: no tick ack in ${now - lastAck}ms`);
+        serverWarn(`[GameRoom] kicking ${id}: no tick ack in ${now - lastAck}ms`);
         broken.push(id);
       }
     }
@@ -534,7 +569,7 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   async #rejoin(): Promise<void> {
     if (!this.#rejoinPromise) {
       this.#rejoinPromise = (async () => {
-        console.warn(`[RoomSession] ${this.#playerId} re-joining after DO eviction`);
+        serverWarn(`[RoomSession] ${this.#playerId} re-joining after DO eviction`);
         this.#sessionToken = await this.#getRoom().join(this.#playerId, this.#name, this.#onTick);
       })().finally(() => {
         this.#rejoinPromise = null;
@@ -592,13 +627,28 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
     return this.#getRoom().setTimeOfDay(timeS);
   }
 
+  /** Selects the starter creature for this player. */
+  chooseStarter(speciesId: CreatureSpeciesId) {
+    return this.#call(() => this.#getRoom().chooseStarter(this.#playerId, speciesId));
+  }
+
+  /** Starts a battle against a targeted wild creature. */
+  startBattle(creatureId: string) {
+    return this.#call(() => this.#getRoom().startBattle(this.#playerId, creatureId));
+  }
+
+  /** Selects the player's move for the active battle turn. */
+  chooseBattleMove(moveId: string) {
+    return this.#call(() => this.#getRoom().chooseBattleMove(this.#playerId, moveId));
+  }
+
   /** Leaves the room (idempotent; subsequent calls are no-ops). */
   async leave() {
     if (this.#left) return;
     this.#left = true;
-    console.log(`[RoomSession] ${this.#playerId} left the room (session ${this.#sessionToken})`);
+    serverLog(`[RoomSession] ${this.#playerId} left the room (session ${this.#sessionToken})`);
     await this.#getRoom().leave(this.#playerId, this.#sessionToken);
-    console.log(`[RoomSession] ${this.#playerId} left the room - finalized`);
+    serverLog(`[RoomSession] ${this.#playerId} left the room - finalized`);
   }
 
   /** Called automatically when the RPC session is disposed. */

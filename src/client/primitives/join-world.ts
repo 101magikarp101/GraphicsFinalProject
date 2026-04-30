@@ -2,6 +2,7 @@ import { batch, createMemo, createSignal, onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { LocalPrediction } from "@/client/engine/entities";
 import { useSession } from "@/client/session";
+import type { BattleSessionState, StarterCreatureState } from "@/game/battle";
 import { createInventoryUiState } from "@/game/crafting";
 import type { CreaturePublicState } from "@/game/creature";
 import { Player, type PlayerPublicState, type PlayerState } from "@/game/player";
@@ -34,6 +35,8 @@ export function joinWorld(roomId: string) {
   const [remoteCreatures, setRemoteCreatures] = createStore<Record<string, CreaturePublicState>>({});
   const [tickInfo, setTickInfo] = createStore<TickInfo>({ tick: 0, tickTimeMs: 0, timeOfDayS: 0 });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
+  const [starterState, setStarterState] = createSignal<StarterCreatureState | null>(null);
+  const [battleState, setBattleState] = createSignal<BattleSessionState | null>(null);
   const sounds = createSoundEffects();
 
   const blockAckQueue: Array<{ seq: number; accepted: boolean }> = [];
@@ -115,6 +118,12 @@ export function joinWorld(roomId: string) {
         setRemoteCreatures(reconcile(next));
         return;
       }
+      case "starterState":
+        setStarterState(packet.starter);
+        return;
+      case "battleState":
+        setBattleState(packet.battle);
+        return;
     }
   }
 
@@ -138,6 +147,8 @@ export function joinWorld(roomId: string) {
     remotePlayers,
     remoteCreatures,
     tickInfo,
+    starterState,
+    battleState,
     snapCount,
     session,
     replicated,

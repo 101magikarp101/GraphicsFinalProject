@@ -4,6 +4,7 @@ import { CHUNK_SIZE, chunkKey, chunkOrigin } from "@/game/chunk";
 import type * as schema from "../server/schema";
 import type { ChunkBlob, ChunkStorage } from "./chunk-storage";
 import type { GameSystem, SystemContext } from "./game-system";
+import { serverError, serverWarn } from "./logging";
 import { blockIntersectsPlayer } from "./player";
 import type { PlayerSystem } from "./player-system";
 import type { BlockActionPacket, ServerPacket } from "./protocol";
@@ -135,7 +136,7 @@ export class BlockSystem implements GameSystem {
       const elapsedMs = now - this.chunkFetchStartedAtMs;
       if (elapsedMs >= 5000 && now - this.lastSlowFetchLogAtMs >= 5000) {
         this.lastSlowFetchLogAtMs = now;
-        console.warn(`[BlockSystem] chunk fetch still in flight after ${elapsedMs}ms`);
+        serverWarn(`[BlockSystem] chunk fetch still in flight after ${elapsedMs}ms`);
       }
     } else if (this.pendingChunkRequests.size > 0) {
       this.drainChunkRequests();
@@ -257,7 +258,7 @@ export class BlockSystem implements GameSystem {
         })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
-          console.error(`[BlockSystem] chunk load failed: ${message}`);
+          serverError(`[BlockSystem] chunk load failed: ${message}`);
           this.requeueMisses(missBatches, capturedGens);
         })
         .finally(() => {

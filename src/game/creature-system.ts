@@ -207,6 +207,29 @@ export class CreatureSystem implements GameSystem {
     this.dirtyIds.clear();
   }
 
+  extractWildCreatureForBattle(
+    creatureId: string,
+    playerPosition: { x: number; z: number },
+    maxDistance = 8,
+  ): CreatureState | undefined {
+    const creature = this.creatures.get(creatureId);
+    if (!creature || !creature.state.isWild) return undefined;
+
+    const dx = creature.x - playerPosition.x;
+    const dz = creature.z - playerPosition.z;
+    if (dx * dx + dz * dz > maxDistance * maxDistance) return undefined;
+
+    this.creatures.delete(creatureId);
+    this.pendingDespawnIds.add(creatureId);
+    this.dirtyIds.add(creatureId);
+
+    return {
+      ...creature.state,
+      stats: { ...creature.state.stats },
+      knownMoves: [...creature.state.knownMoves],
+    };
+  }
+
   private spawnFromLoadedChunks(nowMs: number): boolean {
     if (this.onlinePlayerIds.size === 0) return false;
     if (this.countWild() >= GLOBAL_WILD_CAP) return false;
