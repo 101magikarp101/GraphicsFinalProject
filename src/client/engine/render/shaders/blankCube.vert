@@ -3,6 +3,7 @@ precision mediump float;
 
 uniform mat4 uView;
 uniform mat4 uProj;
+uniform mat4 uLightViewProj;
 
 in vec4 aNorm;
 in vec4 aVertPos;
@@ -20,6 +21,7 @@ out vec4 normal;
 out vec4 wsPos;
 out vec2 uv;
 out vec3 color;
+out vec4 shadowPos;
 flat out vec4 faceAmbientOcclusion;
 flat out float cubeType;
 flat out float cubeSeed;
@@ -45,6 +47,7 @@ float seedFromOrigin(vec3 c) {
 void main() {
   wsPos = vec4(aVertPos.xyz + aOffset.xyz, 1.0);
   gl_Position = uProj * uView * wsPos;
+  shadowPos = uLightViewProj * wsPos;
   normal = normalize(aNorm);
   uv = aUV;
   color = aColor;

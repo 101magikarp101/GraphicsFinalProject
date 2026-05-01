@@ -5,6 +5,7 @@ import {
   getHeldItemDamage,
   PLAYER_MAX_HEALTH,
   PLAYER_SPEED,
+  PLAYER_SPRINT_MULTIPLIER,
   Player,
 } from "../src/game/player";
 
@@ -64,6 +65,12 @@ describe("Player", () => {
     player.step(I(1, 1));
     const dist = Math.sqrt(player.state.x * player.state.x + player.state.z * player.state.z);
     expect(dist).toBeCloseTo(PLAYER_SPEED);
+  });
+
+  it("sprints when requested", () => {
+    const player = P();
+    player.step({ ...I(1, 0), sprint: true });
+    expect(player.state.x).toBeCloseTo(PLAYER_SPEED * PLAYER_SPRINT_MULTIPLIER);
   });
 
   it("does not move on zero-length input", () => {

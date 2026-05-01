@@ -1,16 +1,27 @@
-import type { Mat4 } from "gl-matrix";
+import { Mat4, Vec3 } from "gl-matrix";
 import { WebGLUtilities } from "@/lib/webglutils/CanvasAnimation";
 import { RenderPass } from "@/lib/webglutils/RenderPass";
 import type { EntityDrawData, EntityPassDef } from "../entities/pipeline";
 import { BlockHighlight } from "./block-highlight";
 import { Cube } from "./cube";
 import { GpuTimer } from "./gpu-timer";
+import { Quad } from "./quad";
 import blankCubeFSText from "./shaders/blankCube.frag";
 import blankCubeVSText from "./shaders/blankCube.vert";
 import cloudsFSText from "./shaders/clouds.frag";
 import cloudsVSText from "./shaders/clouds.vert";
+import shadowMapFSText from "./shaders/shadowMap.frag";
+import shadowMapVSText from "./shaders/shadowMap.vert";
+import shadowOverlayFSText from "./shaders/shadowOverlay.frag";
+import shadowOverlayVSText from "./shaders/shadowOverlay.vert";
+import shadowVolumeFSText from "./shaders/shadowVolume.frag";
+import shadowVolumeVSText from "./shaders/shadowVolume.vert";
 import skyboxFSText from "./shaders/skybox.frag";
 import skyboxVSText from "./shaders/skybox.vert";
+import { type ShadowTechnique, shadowTechniqueIndex } from "./shadow-technique";
+import { createDirectionalCubeShadowVolumeGeometry, SHADOW_VOLUME_INDEX_DATA } from "./shadow-volume";
+
+const SHADOW_MAP_SIZE = 2048;
 
 export interface RenderView {
   viewMatrix: Mat4;
@@ -20,6 +31,7 @@ export interface RenderView {
   cubeAmbientOcclusion: Uint8Array;
   numCubes: number;
   lightPosition: Float32Array;
+  lightDirection: Float32Array;
   /** Actual sun position (unflipped). Used by the skybox to place sun/moon discs. */
   sunPosition: Float32Array;
   backgroundColor: Float32Array;
@@ -27,6 +39,8 @@ export interface RenderView {
   ambientColor: Float32Array;
   /** RGB sun/moon light color (changes with time of day). */
   sunColor: Float32Array;
+  shadowTechnique: ShadowTechnique;
+  shadowStrength: number;
   /** Wall-clock seconds since game start; drives fluid surface animation. */
   timeS: number;
   /** World-space camera eye position. Used for distance fog. */
@@ -55,13 +69,23 @@ export class Renderer {
   private readonly skyboxRenderPass: RenderPass;
   private readonly cloudRenderPass: RenderPass;
   private readonly blankCubeRenderPass: RenderPass;
+  private readonly shadowMapRenderPass: RenderPass;
+  private readonly shadowVolumeRenderPass: RenderPass;
+  private readonly shadowOverlayRenderPass: RenderPass;
   private readonly entityPasses: Map<string, EntityPass>;
   private readonly blockHighlight: BlockHighlight;
   readonly gpuTimer: GpuTimer;
 
   private currentView!: RenderView;
   private readonly viewNoTranslation = new Float32Array(16);
+  private readonly shadowLightViewProj = new Mat4();
+  private readonly shadowLightView = new Mat4();
+  private readonly shadowLightProj = new Mat4();
+  private readonly shadowMapTexelSize = new Float32Array([1 / SHADOW_MAP_SIZE, 1 / SHADOW_MAP_SIZE]);
   private readonly cloudSeed = new Float32Array([Math.random() * 1000, Math.random() * 1000]);
+  private readonly shadowFramebuffer: WebGLFramebuffer;
+  private readonly shadowDepthTexture: WebGLTexture;
+  private lastShadowVolumeDirectionKey = "";
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
   private lastCubeAmbientOcclusion: Uint8Array | null = null;
@@ -72,10 +96,19 @@ export class Renderer {
     this.gpuTimer = new GpuTimer(this.ctx);
 
     const cubeGeometry = new Cube();
+    const shadowResources = this.createShadowResources();
+    this.shadowFramebuffer = shadowResources.framebuffer;
+    this.shadowDepthTexture = shadowResources.depthTexture;
     this.skyboxRenderPass = new RenderPass(this.ctx, skyboxVSText, skyboxFSText);
     this.initSkyboxPass(cubeGeometry);
     this.cloudRenderPass = new RenderPass(this.ctx, cloudsVSText, cloudsFSText);
     this.initCloudPass(cubeGeometry);
+    this.shadowMapRenderPass = new RenderPass(this.ctx, shadowMapVSText, shadowMapFSText);
+    this.initShadowMapPass(cubeGeometry);
+    this.shadowVolumeRenderPass = new RenderPass(this.ctx, shadowVolumeVSText, shadowVolumeFSText);
+    this.initShadowVolumePass();
+    this.shadowOverlayRenderPass = new RenderPass(this.ctx, shadowOverlayVSText, shadowOverlayFSText);
+    this.initShadowOverlayPass(new Quad());
     this.blankCubeRenderPass = new RenderPass(this.ctx, blankCubeVSText, blankCubeFSText);
     this.initBlankCubePass(cubeGeometry);
 
@@ -96,11 +129,29 @@ export class Renderer {
 
   render(view: RenderView): void {
     this.currentView = view;
+    this.updateShadowLightMatrix();
+    if (view.cubePositions !== this.lastCubePositions) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
+      this.shadowMapRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
+      this.shadowVolumeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
+      this.lastCubePositions = view.cubePositions;
+    }
+    if (view.cubeColors !== this.lastCubeColors) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
+      this.lastCubeColors = view.cubeColors;
+    }
+    if (view.cubeAmbientOcclusion !== this.lastCubeAmbientOcclusion) {
+      this.blankCubeRenderPass.updateAttributeBuffer("aAmbientOcclusion", view.cubeAmbientOcclusion);
+      this.lastCubeAmbientOcclusion = view.cubeAmbientOcclusion;
+    }
+    if (view.shadowTechnique === "shadow-map") {
+      this.drawShadowMap();
+    }
 
     const gl = this.ctx;
     const [bgR = 0, bgG = 0, bgB = 0, bgA = 1] = view.backgroundColor;
     gl.clearColor(bgR, bgG, bgB, bgA);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
     gl.frontFace(gl.CCW);
@@ -113,18 +164,6 @@ export class Renderer {
 
     this.drawSkybox();
 
-    if (view.cubePositions !== this.lastCubePositions) {
-      this.blankCubeRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
-      this.lastCubePositions = view.cubePositions;
-    }
-    if (view.cubeColors !== this.lastCubeColors) {
-      this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
-      this.lastCubeColors = view.cubeColors;
-    }
-    if (view.cubeAmbientOcclusion !== this.lastCubeAmbientOcclusion) {
-      this.blankCubeRenderPass.updateAttributeBuffer("aAmbientOcclusion", view.cubeAmbientOcclusion);
-      this.lastCubeAmbientOcclusion = view.cubeAmbientOcclusion;
-    }
     this.blankCubeRenderPass.drawInstanced(view.numCubes);
 
     for (const entity of view.entities) {
@@ -150,6 +189,10 @@ export class Renderer {
       }
       if (!ep.depthTest) gl.enable(gl.DEPTH_TEST);
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
+    }
+
+    if (view.shadowTechnique === "shadow-volume") {
+      this.drawShadowVolumes();
     }
 
     this.drawClouds();
@@ -195,6 +238,123 @@ export class Renderer {
     gl.depthFunc(gl.LESS);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
+  }
+
+  private drawShadowMap(): void {
+    const gl = this.ctx;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFramebuffer);
+    gl.viewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    gl.colorMask(false, false, false, false);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.FRONT);
+    this.shadowMapRenderPass.drawInstanced(this.currentView.numCubes);
+    gl.cullFace(gl.BACK);
+    gl.colorMask(true, true, true, true);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  private drawShadowVolumes(): void {
+    const gl = this.ctx;
+    this.updateShadowVolumeGeometry();
+
+    gl.clearStencil(0);
+    gl.clear(gl.STENCIL_BUFFER_BIT);
+    gl.enable(gl.STENCIL_TEST);
+    gl.stencilMask(0xff);
+    gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+    gl.colorMask(false, false, false, false);
+    gl.depthMask(false);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    gl.disable(gl.CULL_FACE);
+
+    gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.INCR_WRAP, gl.KEEP);
+    gl.stencilOpSeparate(gl.FRONT, gl.KEEP, gl.DECR_WRAP, gl.KEEP);
+    this.shadowVolumeRenderPass.drawInstanced(this.currentView.numCubes);
+
+    gl.colorMask(true, true, true, true);
+    gl.disable(gl.DEPTH_TEST);
+    gl.stencilMask(0x00);
+    gl.stencilFunc(gl.NOTEQUAL, 0, 0xff);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    this.shadowOverlayRenderPass.draw();
+    gl.disable(gl.BLEND);
+
+    gl.stencilMask(0xff);
+    gl.disable(gl.STENCIL_TEST);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    gl.depthMask(true);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+  }
+
+  private createShadowResources(): { framebuffer: WebGLFramebuffer; depthTexture: WebGLTexture } {
+    const gl = this.ctx;
+    const depthTexture = gl.createTexture();
+    if (!depthTexture) throw new Error("Failed to create shadow depth texture");
+    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.DEPTH_COMPONENT24,
+      SHADOW_MAP_SIZE,
+      SHADOW_MAP_SIZE,
+      0,
+      gl.DEPTH_COMPONENT,
+      gl.UNSIGNED_INT,
+      null,
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    const framebuffer = gl.createFramebuffer();
+    if (!framebuffer) throw new Error("Failed to create shadow framebuffer");
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0);
+    gl.drawBuffers([gl.NONE]);
+    gl.readBuffer(gl.NONE);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error("Shadow framebuffer is incomplete");
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    return { framebuffer, depthTexture };
+  }
+
+  private updateShadowLightMatrix(): void {
+    const view = this.currentView;
+    const center = new Vec3([view.cameraPos[0] ?? 0, view.cameraPos[1] ?? 0, view.cameraPos[2] ?? 0]);
+    const lightDirection = new Vec3([
+      view.lightDirection[0] ?? 0,
+      view.lightDirection[1] ?? 0,
+      view.lightDirection[2] ?? 1,
+    ]).normalize();
+    const lightEye = Vec3.clone(center).add(lightDirection.scale(190));
+    Mat4.lookAt(this.shadowLightView, lightEye, center, new Vec3([0, 1, 0]));
+
+    const radius = Math.max(72, Math.min(220, view.fogFar * 0.45));
+    Mat4.ortho(this.shadowLightProj, -radius, radius, -radius, radius, 1, 420);
+    Mat4.multiply(this.shadowLightViewProj, this.shadowLightProj, this.shadowLightView);
+  }
+
+  private updateShadowVolumeGeometry(): void {
+    const lightDirection = this.currentView.lightDirection;
+    const key = `${(lightDirection[0] ?? 0).toFixed(3)},${(lightDirection[1] ?? 0).toFixed(3)},${(lightDirection[2] ?? 1).toFixed(3)}`;
+    if (key === this.lastShadowVolumeDirectionKey) return;
+    this.lastShadowVolumeDirectionKey = key;
+    this.shadowVolumeRenderPass.updateAttributeBuffer(
+      "aVertPos",
+      createDirectionalCubeShadowVolumeGeometry(
+        new Vec3([lightDirection[0] ?? 0, lightDirection[1] ?? 0, lightDirection[2] ?? 1]),
+      ),
+    );
   }
 
   private initEntityPass(pass: RenderPass, def: EntityPassDef): void {
@@ -433,6 +593,95 @@ export class Renderer {
     0.6, // Cactus
   ]);
 
+  private initShadowMapPass(cube: Cube): void {
+    const gl = this.ctx;
+    const pass = this.shadowMapRenderPass;
+
+    pass.setIndexBufferData(cube.indicesFlat());
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      cube.positionsFlat(),
+    );
+    pass.addInstancedAttribute(
+      "aOffset",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addUniform("uLightViewProj", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.shadowLightViewProj));
+    });
+    pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private initShadowVolumePass(): void {
+    const gl = this.ctx;
+    const pass = this.shadowVolumeRenderPass;
+
+    pass.setIndexBufferData(SHADOW_VOLUME_INDEX_DATA);
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      createDirectionalCubeShadowVolumeGeometry(new Vec3([0, 1, 0])),
+    );
+    pass.addInstancedAttribute(
+      "aOffset",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    pass.addUniform("uProj", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
+    });
+    pass.addUniform("uView", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
+    });
+    pass.setDrawData(gl.TRIANGLES, SHADOW_VOLUME_INDEX_DATA.length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
+  private initShadowOverlayPass(quad: Quad): void {
+    const gl = this.ctx;
+    const pass = this.shadowOverlayRenderPass;
+
+    pass.setIndexBufferData(quad.indicesFlat());
+    pass.addAttribute(
+      "aVertPos",
+      4,
+      gl.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      quad.positionsFlat(),
+    );
+    pass.addUniform("uShadowStrength", (glCtx: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      glCtx.uniform1f(loc, this.currentView.shadowStrength);
+    });
+    pass.setDrawData(gl.TRIANGLES, quad.indicesFlat().length, gl.UNSIGNED_INT, 0);
+    pass.setup();
+  }
+
   private initBlankCubePass(cube: Cube): void {
     const gl = this.ctx;
     const pass = this.blankCubeRenderPass;
@@ -545,6 +794,17 @@ export class Renderer {
     pass.addUniform("uLut2Scale", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform1fv(loc, Renderer.LUT2_SCALE);
     });
+    pass.addUniform("uShadowTechnique", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1i(loc, shadowTechniqueIndex(this.currentView.shadowTechnique));
+    });
+    pass.addUniform("uShadowMap", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, this.shadowDepthTexture);
+      gl.uniform1i(loc, 3);
+    });
+    pass.addUniform("uShadowMapTexelSize", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform2fv(loc, this.shadowMapTexelSize);
+    });
 
     pass.setDrawData(gl.TRIANGLES, cube.indicesFlat().length, gl.UNSIGNED_INT, 0);
     pass.setup();
@@ -640,11 +900,17 @@ export class Renderer {
     pass.addUniform("uLightPos", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform4fv(loc, this.currentView.lightPosition);
     });
+    pass.addUniform("uLightDir", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform3fv(loc, this.currentView.lightDirection);
+    });
     pass.addUniform("uProj", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.projMatrix));
     });
     pass.addUniform("uView", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniformMatrix4fv(loc, false, new Float32Array(this.currentView.viewMatrix));
+    });
+    pass.addUniform("uLightViewProj", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniformMatrix4fv(loc, false, new Float32Array(this.shadowLightViewProj));
     });
     pass.addUniform("uAmbient", (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform3fv(loc, this.currentView.ambientColor);
@@ -666,6 +932,9 @@ export class Renderer {
     });
     pass.addUniform("uFogFar", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform1f(loc, this.currentView.fogFar);
+    });
+    pass.addUniform("uShadowStrength", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1f(loc, this.currentView.shadowStrength);
     });
   }
 }

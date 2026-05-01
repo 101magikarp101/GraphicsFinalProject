@@ -4,36 +4,41 @@ import { Vec3 } from "gl-matrix";
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { CubeType } from "@/client/engine/render/cube-types";
+import type { BattleMoveVisualKind, BattleSessionState } from "@/game/battle";
 import { CHUNK_SIZE } from "@/game/chunk";
 import type { CreaturePublicState } from "@/game/creature";
+import { findTargetedCreatureId } from "@/game/creature-targeting";
 import { PlacedObjectType, RENDERABLE_PLACED_OBJECT_TYPES } from "@/game/object-placement";
 import { filterRenderablePlacedObjects } from "@/game/object-placement-render";
 import { blockIntersectsPlayer, type Player, type PlayerInput, type PlayerPositionPacket } from "@/game/player";
-import { findTargetedCreatureId } from "@/game/creature-targeting";
 import { findTargetedPlayerId } from "@/game/player-targeting";
 import { DAY_LENGTH_S } from "@/game/time";
 import {
-  benchmarkSamplesToCsv,
-  benchmarkSummaryToCsv,
-  createRateMeter,
-  createRingBuffer,
-  summarizeBenchmark,
   type BenchmarkConfig,
   type BenchmarkSample,
   type BenchmarkScene,
   type BenchmarkSummary,
+  benchmarkSamplesToCsv,
+  benchmarkSummariesToMarkdown,
+  benchmarkSummaryToCsv,
+  createRateMeter,
+  createRingBuffer,
+  summarizeBenchmark,
 } from "../primitives";
 import type { joinWorld } from "../primitives/join-world";
 import { CameraController } from "./camera-controller";
 import { ChunkManager } from "./chunks";
 import { ChunkWorkerClient } from "./chunks/client";
 import {
+  type BattleEffectInstance,
+  battleEffectPassDef,
+  createEntityPipeline,
   creatureHighlightPassDef,
   creaturePassDef,
   creaturePipelineConfig,
-  createEntityPipeline,
   type EntityDrawData,
   type GpuBuffers,
+  packBattleEffects,
   packPlacedObjects,
   packPlacedRocks,
   placedObjectPassDef,
@@ -45,6 +50,7 @@ import { createInput, type InputOptions } from "./input";
 import type { RaycastHit } from "./raycast";
 import { raycastVoxels } from "./raycast";
 import { Renderer } from "./render/renderer";
+import type { ShadowTechnique } from "./render/shadow-technique";
 import { createRenderLoop } from "./render-loop";
 import { SceneLighting } from "./scene-lighting";
 
@@ -57,6 +63,8 @@ export interface CreateGameArgs {
     invertY: () => boolean;
     renderDistance: () => number;
     showMobHighlight: () => boolean;
+    shadowTechnique: () => ShadowTechnique;
+    shadowStrength: () => number;
   };
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
@@ -86,6 +94,8 @@ export interface BenchmarkDiagnostics {
   enabled: boolean;
   active: boolean;
   scene: BenchmarkScene;
+  shadowTechnique: ShadowTechnique;
+  shadowStrength: number;
   elapsedS: number;
   durationS: number;
   sampleCount: number;
@@ -115,6 +125,128 @@ interface MutableGameState {
   };
 }
 
+function withBattleCreatures(
+  creatures: Record<string, CreaturePublicState>,
+  battle: BattleSessionState | null,
+  nowMs: number,
+): Record<string, CreaturePublicState> {
+  if (!battle?.active) return creatures;
+  return {
+    ...creatures,
+    [battle.starter.id]: battleCreatureToPublic(battle, "starter", nowMs),
+    [battle.wild.id]: battleCreatureToPublic(battle, "wild", nowMs),
+  };
+}
+
+function battleCreatureToPublic(
+  battle: BattleSessionState,
+  actor: "starter" | "wild",
+  nowMs: number,
+): CreaturePublicState {
+  const creature = battle[actor];
+  return {
+    id: creature.id,
+    speciesId: creature.speciesId,
+    x: creature.x,
+    y: creature.y + hitReactionOffset(battle, actor, nowMs),
+    z: creature.z,
+    yaw: creature.yaw,
+    level: creature.level,
+    hp: creature.hp,
+    maxHp: creature.maxHp,
+    isWild: actor === "wild",
+    status: creature.status,
+  };
+}
+
+function hitReactionOffset(battle: BattleSessionState, actor: "starter" | "wild", nowMs: number): number {
+  const animation = battle.lastTurnAnimation;
+  if (!animation) return 0;
+  let offset = 0;
+  for (const action of animation.actions) {
+    const target = action.actor === "starter" ? "wild" : "starter";
+    if (target !== actor || !action.hit || action.damage <= 0) continue;
+    const elapsed = nowMs - action.impactAtMs;
+    if (elapsed < 0 || elapsed > 280) continue;
+    offset = Math.max(offset, Math.sin((elapsed / 280) * Math.PI) * 0.22);
+  }
+  return offset;
+}
+
+function battleEffectInstances(battle: BattleSessionState | null, nowMs: number): BattleEffectInstance[] {
+  const animation = battle?.lastTurnAnimation;
+  if (!battle?.active || !animation) return [];
+
+  const effects: BattleEffectInstance[] = [];
+  for (const action of animation.actions) {
+    if (nowMs < action.startsAtMs || nowMs > action.endsAtMs) continue;
+    const source = action.actor === "starter" ? battle.starter : battle.wild;
+    const target = action.actor === "starter" ? battle.wild : battle.starter;
+    const color = effectColorForMove(action.moveId, action.visualKind);
+
+    if (action.visualKind === "projectile") {
+      const travelT = clamp01((nowMs - action.startsAtMs) / Math.max(1, action.impactAtMs - action.startsAtMs));
+      effects.push({
+        x: lerp(source.x, target.x, travelT),
+        y: lerp(source.y + 0.8, target.y + 0.75, travelT),
+        z: lerp(source.z, target.z, travelT),
+        scale: 0.28 + Math.sin(travelT * Math.PI) * 0.12,
+        color,
+      });
+    } else if (action.visualKind === "melee") {
+      const lungeT = clamp01((nowMs - action.startsAtMs) / Math.max(1, action.impactAtMs - action.startsAtMs));
+      const eased = Math.sin(lungeT * Math.PI);
+      effects.push({
+        x: lerp(source.x, target.x, 0.28 * eased),
+        y: source.y + 0.75,
+        z: lerp(source.z, target.z, 0.28 * eased),
+        scale: 0.2 + eased * 0.28,
+        color,
+      });
+    } else {
+      const pulseT = clamp01((nowMs - action.startsAtMs) / Math.max(1, action.endsAtMs - action.startsAtMs));
+      effects.push({
+        x: source.x,
+        y: source.y + 0.95,
+        z: source.z,
+        scale: 0.4 + pulseT * 0.45,
+        color,
+      });
+    }
+
+    const impactElapsed = nowMs - action.impactAtMs;
+    if (impactElapsed >= 0 && impactElapsed <= 360) {
+      const t = impactElapsed / 360;
+      effects.push({
+        x: target.x,
+        y: target.y + 0.82,
+        z: target.z,
+        scale: 0.2 + t * 0.55,
+        color: [color[0], color[1], color[2], (1 - t) * (action.hit ? 0.72 : 0.32)],
+      });
+    }
+  }
+  return effects;
+}
+
+function effectColorForMove(moveId: string, kind: BattleMoveVisualKind): [number, number, number, number] {
+  if (kind === "melee") return [1, 0.95, 0.62, 0.86];
+  if (kind === "status") return [0.72, 0.55, 1, 0.72];
+  if (moveId.includes("ember") || moveId.includes("flame")) return [1, 0.35, 0.14, 0.88];
+  if (moveId.includes("splash") || moveId.includes("tidal")) return [0.25, 0.65, 1, 0.84];
+  if (moveId.includes("vine") || moveId.includes("spore")) return [0.42, 0.95, 0.35, 0.82];
+  return [0.9, 0.9, 1, 0.8];
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
 export interface MinimapApi {
   /** Increments whenever chunk surface data changes. */
   terrainVersion: () => number;
@@ -136,6 +268,7 @@ export interface GameState extends Readonly<MutableGameState> {
     stop: () => void;
     exportJson: () => void;
     exportCsv: () => void;
+    exportMarkdown: () => void;
   };
 }
 
@@ -187,6 +320,7 @@ function initRenderState(gl: HTMLCanvasElement, player: Player) {
     playerPassDef,
     creaturePassDef,
     creatureHighlightPassDef,
+    battleEffectPassDef,
     placedObjectPassDef,
     placedRockPassDef,
   ]);
@@ -236,6 +370,8 @@ export function createGame(args: CreateGameArgs): GameState {
         enabled: Boolean(benchmarkConfig),
         active: false,
         scene: benchmarkConfig?.scene ?? "open",
+        shadowTechnique: benchmarkConfig?.shadowTechnique ?? args.preferences.shadowTechnique(),
+        shadowStrength: benchmarkConfig?.shadowStrength ?? args.preferences.shadowStrength(),
         elapsedS: 0,
         durationS: benchmarkEffectiveDurationS,
         sampleCount: 0,
@@ -262,6 +398,7 @@ export function createGame(args: CreateGameArgs): GameState {
   const msptHistory = createRingBuffer(FRAME_HISTORY_SIZE);
   const placedObjectBuffers: GpuBuffers = {};
   const placedRockBuffers: GpuBuffers = {};
+  const battleEffectBuffers: GpuBuffers = {};
   let frame = 0;
   let lastSnapCount = 0;
   let lastTick = 0;
@@ -292,6 +429,8 @@ export function createGame(args: CreateGameArgs): GameState {
       enabled: true,
       active: true,
       scene: benchmarkConfig.scene,
+      shadowTechnique: benchmarkConfig.shadowTechnique,
+      shadowStrength: benchmarkConfig.shadowStrength,
       elapsedS: 0,
       durationS: benchmarkEffectiveDurationS,
       sampleCount: 0,
@@ -302,7 +441,13 @@ export function createGame(args: CreateGameArgs): GameState {
   const stopBenchmark = () => {
     if (!benchmarkConfig || !benchmarkActive) return;
     benchmarkActive = false;
-    benchmarkSummary = summarizeBenchmark(benchmarkConfig.scene, benchmarkEffectiveDurationS, benchmarkSamples);
+    benchmarkSummary = summarizeBenchmark(
+      benchmarkConfig.scene,
+      benchmarkConfig.shadowTechnique,
+      benchmarkConfig.shadowStrength,
+      benchmarkEffectiveDurationS,
+      benchmarkSamples,
+    );
     const benchmarkRecord = {
       config: benchmarkConfig,
       summary: benchmarkSummary,
@@ -317,6 +462,8 @@ export function createGame(args: CreateGameArgs): GameState {
       enabled: true,
       active: false,
       scene: benchmarkConfig.scene,
+      shadowTechnique: benchmarkConfig.shadowTechnique,
+      shadowStrength: benchmarkConfig.shadowStrength,
       elapsedS: benchmarkEffectiveDurationS,
       durationS: benchmarkEffectiveDurationS,
       sampleCount: benchmarkSamples.length,
@@ -344,6 +491,15 @@ export function createGame(args: CreateGameArgs): GameState {
     const samplesCsv = benchmarkSamplesToCsv(benchmarkSamples);
     downloadTextFile(`benchmark-${benchmarkConfig.scene}-${Date.now()}-summary.csv`, summaryCsv, "text/csv");
     downloadTextFile(`benchmark-${benchmarkConfig.scene}-${Date.now()}-samples.csv`, samplesCsv, "text/csv");
+  };
+
+  const exportBenchmarkMarkdown = () => {
+    if (!benchmarkConfig || !benchmarkSummary) return;
+    downloadTextFile(
+      `benchmark-${benchmarkConfig.scene}-${benchmarkConfig.shadowTechnique}-${Date.now()}-report.md`,
+      benchmarkSummariesToMarkdown([benchmarkSummary]),
+      "text/markdown",
+    );
   };
 
   if (benchmarkConfig?.autoStart) startBenchmark();
@@ -507,6 +663,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const keys = input.walkKeys();
     const walk = effectiveInputEnabled ? camera.walkDir(keys) : { x: 0, z: 0 };
     const jump = effectiveInputEnabled && keys.space;
+    const sprint = effectiveInputEnabled && keys.shift;
 
     if (benchmarkConfig && benchmarkActive) {
       const elapsedS = (now - benchmarkStartedAtMs) / 1000;
@@ -523,7 +680,7 @@ export function createGame(args: CreateGameArgs): GameState {
     const yaw = camera.yaw();
     const pitch = camera.pitch();
     if (inputEnabled() && chunks.hasChunkAt(player.state.x, player.state.z)) {
-      const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump };
+      const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump, sprint };
       room().replicated()?.predict(next);
     }
     camera.setPosition(player.position);
@@ -586,7 +743,10 @@ export function createGame(args: CreateGameArgs): GameState {
     const tickInfo = room().tickInfo;
     if (tickInfo.tick !== lastTick) {
       remotePlayers.onSnapshot(unwrap(room().remotePlayers), now);
-      remoteCreatures.onSnapshot(unwrap(room().remoteCreatures), now);
+      remoteCreatures.onSnapshot(
+        withBattleCreatures(unwrap(room().remoteCreatures), room().battleState(), Date.now()),
+        now,
+      );
       lastTick = tickInfo.tick;
       msptHistory.push(tickInfo.tickTimeMs);
       timeOffsetS = tickInfo.timeOfDayS - ((now / 1000) % DAY_LENGTH_S);
@@ -619,13 +779,20 @@ export function createGame(args: CreateGameArgs): GameState {
     const timeOfDayS = (((now / 1000 + timeOffsetS) % DAY_LENGTH_S) + DAY_LENGTH_S) % DAY_LENGTH_S;
     lighting.update(timeOfDayS);
     fogColor.set(lighting.backgroundColor.subarray(0, 3));
+    const shadowTechnique =
+      benchmarkConfig && benchmarkActive ? benchmarkConfig.shadowTechnique : args.preferences.shadowTechnique();
+    const shadowStrength =
+      benchmarkConfig && benchmarkActive ? benchmarkConfig.shadowStrength : args.preferences.shadowStrength();
 
     // --- Render ---
     const { buffers, count } = remotePlayers.frame(now);
     const { buffers: creatureBuffers, count: creatureCount } = remoteCreatures.frame(now);
+    const battleEffects = battleEffectInstances(room().battleState(), Date.now());
+    const battleEffectCount = packBattleEffects(battleEffects, battleEffectBuffers);
     const entities: EntityDrawData[] = [
       { key: "players", buffers, count },
       { key: "creatures", buffers: creatureBuffers, count: creatureCount },
+      { key: "battle-effects", buffers: battleEffectBuffers, count: battleEffectCount },
       { key: "placed-objects", buffers: placedObjectBuffers, count: renderedFoliageCount },
       { key: "placed-rocks", buffers: placedRockBuffers, count: renderedRockCount },
     ];
@@ -640,10 +807,13 @@ export function createGame(args: CreateGameArgs): GameState {
       cubeAmbientOcclusion: chunks.ambientOcclusion,
       numCubes: chunks.count,
       lightPosition: lighting.lightPosition,
+      lightDirection: lighting.lightDirection,
       sunPosition: lighting.sunPosition,
       backgroundColor: lighting.backgroundColor,
       ambientColor: lighting.ambientColor,
       sunColor: lighting.sunColor,
+      shadowTechnique,
+      shadowStrength,
       timeS: now / 1000,
       cameraPos: eye,
       fogColor,
@@ -676,12 +846,16 @@ export function createGame(args: CreateGameArgs): GameState {
           gpuTimeMs: benchmarkConfig.includeGpuTime ? gpuTimeMs : 0,
           fps: fpsMeter.rate,
           mspt: benchmarkConfig.includeServerTime ? tickInfo.tickTimeMs : 0,
+          shadowTechnique,
+          shadowStrength,
         });
       }
       setState("diagnostics", "benchmark", {
         enabled: true,
         active: true,
         scene: benchmarkConfig.scene,
+        shadowTechnique: benchmarkConfig.shadowTechnique,
+        shadowStrength: benchmarkConfig.shadowStrength,
         elapsedS: Math.max(0, sampleElapsedS),
         durationS: benchmarkEffectiveDurationS,
         sampleCount: benchmarkSamples.length,
@@ -728,6 +902,7 @@ export function createGame(args: CreateGameArgs): GameState {
       stop: stopBenchmark,
       exportJson: exportBenchmarkJson,
       exportCsv: exportBenchmarkCsv,
+      exportMarkdown: exportBenchmarkMarkdown,
     },
     minimap: {
       terrainVersion,

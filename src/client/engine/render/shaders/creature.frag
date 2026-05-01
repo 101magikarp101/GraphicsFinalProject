@@ -1,6 +1,6 @@
 precision mediump float;
 
-uniform vec4 uLightPos;
+uniform vec3 uLightDir;
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
 uniform vec3 uCameraPos;
@@ -22,8 +22,7 @@ void main() {
   }
 
   vec4 n = gl_FrontFacing ? normal : -normal;
-  vec4 lightDirection = uLightPos - wsPos;
-  float dot_nl = dot(normalize(lightDirection), normalize(n));
+  float dot_nl = dot(normalize(uLightDir), normalize(n.xyz));
   dot_nl = clamp(dot_nl, 0.0, 1.0);
 
   vec3 ambient = uAmbient * kd;

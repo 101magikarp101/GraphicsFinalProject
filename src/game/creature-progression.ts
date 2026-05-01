@@ -67,7 +67,10 @@ export function createCreatureState(args: {
   };
 }
 
-export function gainExperience(state: CreatureState, xp: number): {
+export function gainExperience(
+  state: CreatureState,
+  xp: number,
+): {
   levelsGained: number;
   learnedMoves: string[];
 } {
@@ -115,12 +118,12 @@ export function gainExperience(state: CreatureState, xp: number): {
 export function deriveStats(speciesId: CreatureSpeciesId, level: number) {
   const species = CREATURE_SPECIES_BY_ID[speciesId];
   const l = clampLevel(level);
-  const hp = Math.floor(((2 * species.baseStats.hp * l) / 100) + l + 10);
-  const attack = Math.floor(((2 * species.baseStats.attack * l) / 100) + 5);
-  const defense = Math.floor(((2 * species.baseStats.defense * l) / 100) + 5);
-  const specialAttack = Math.floor(((2 * species.baseStats.specialAttack * l) / 100) + 5);
-  const specialDefense = Math.floor(((2 * species.baseStats.specialDefense * l) / 100) + 5);
-  const speed = Math.floor(((2 * species.baseStats.speed * l) / 100) + 5);
+  const hp = Math.floor((2 * species.baseStats.hp * l) / 100 + l + 10);
+  const attack = Math.floor((2 * species.baseStats.attack * l) / 100 + 5);
+  const defense = Math.floor((2 * species.baseStats.defense * l) / 100 + 5);
+  const specialAttack = Math.floor((2 * species.baseStats.specialAttack * l) / 100 + 5);
+  const specialDefense = Math.floor((2 * species.baseStats.specialDefense * l) / 100 + 5);
+  const speed = Math.floor((2 * species.baseStats.speed * l) / 100 + 5);
   return {
     maxHp: Math.max(1, hp),
     attack: Math.max(1, attack),

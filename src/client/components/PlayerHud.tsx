@@ -1,10 +1,12 @@
 import { createMemo, For, Show } from "solid-js";
+import type { StarterCreatureState } from "@/game/battle";
 import { ITEM_DEFINITIONS_BY_ID } from "@/game/items";
 import { HOTBAR_SLOT_COUNT, HOTBAR_START_INDEX, PLAYER_MAX_HEALTH, type Player } from "@/game/player";
 import { InventorySlotButton } from "./InventorySlot";
 
 interface PlayerHudProps {
   player: () => Player | undefined;
+  starter?: () => StarterCreatureState | null;
   onSelectHotbarSlot: (slotIndex: number) => void;
   hidden?: boolean;
 }
@@ -20,6 +22,14 @@ export function PlayerHud(props: PlayerHudProps) {
   const inventory = createMemo(() => props.player()?.state.inventory ?? []);
   const selectedHotbarSlot = createMemo(() => props.player()?.state.selectedHotbarSlot ?? 0);
   const health = createMemo(() => props.player()?.state.health ?? PLAYER_MAX_HEALTH);
+  const starter = createMemo(() => props.starter?.() ?? null);
+  const starterXpPct = createMemo(() => {
+    const s = starter();
+    if (!s) return 0;
+    const xpStart = s.level ** 3;
+    const xpEnd = (s.level + 1) ** 3;
+    return Math.max(0, Math.min(100, ((s.experience - xpStart) / Math.max(1, xpEnd - xpStart)) * 100));
+  });
 
   const selectedHotbarItemName = createMemo(() => {
     const slot = inventory()[HOTBAR_START_INDEX + selectedHotbarSlot()];
@@ -41,6 +51,25 @@ export function PlayerHud(props: PlayerHudProps) {
               )}
             </For>
           </div>
+          <Show when={starter()}>
+            {(s) => (
+              <div class="w-full min-w-72 max-w-md border-2 border-[#1d273d] bg-[rgba(18,26,43,0.86)] px-3 py-2 font-mono shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
+                <div class="flex items-center justify-between gap-3 text-[11px] font-black uppercase tracking-[0.12em] text-[#dfe7ff]">
+                  <span>{s().speciesId}</span>
+                  <span>Lv {s().level}</span>
+                </div>
+                <div class="mt-1 h-1.5 bg-[#0b1020]">
+                  <div class="h-full bg-[#8ca7ff]" style={{ width: `${starterXpPct()}%` }} />
+                </div>
+                <div class="mt-1 flex justify-between text-[10px] uppercase tracking-[0.1em] text-[#b9c6ef]">
+                  <span>
+                    HP {s().hp}/{s().maxHp}
+                  </span>
+                  <span>{s().status}</span>
+                </div>
+              </div>
+            )}
+          </Show>
 
           <div class="border-2 border-white/15 bg-[rgba(30,22,14,0.84)] px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.4)]">
             <div class="mb-2 text-center font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#f1df9f]">

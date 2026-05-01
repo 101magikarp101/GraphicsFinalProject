@@ -116,8 +116,8 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   });
   createEventListener(document, "mousedown", (e) => {
     if (document.pointerLockElement !== canvas()) return;
-    if (e.button === 0) opts.onLeftClick?.();
-    else if (e.button === 2) opts.onRightClick?.();
+    e.preventDefault();
+    opts.onLeftClick?.();
   });
   if (opts.onCycleHotbar) {
     const onCycle = opts.onCycleHotbar;

@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { SHADOW_TECHNIQUES, type ShadowTechnique } from "@/client/engine/render/shadow-technique";
 import type { PlayerState } from "@/game/player";
 import { DAY_LENGTH_S } from "@/game/time";
 import type { BenchmarkDiagnostics } from "../engine/create-game";
@@ -32,11 +33,16 @@ interface DiagnosticsPanelProps {
   packetsPerSec: number;
   timeOfDayS: number;
   benchmark: BenchmarkDiagnostics;
+  shadowTechnique: ShadowTechnique;
+  shadowStrength: number;
   onBenchmarkStart?: () => void;
   onBenchmarkStop?: () => void;
   onBenchmarkExportJson?: () => void;
   onBenchmarkExportCsv?: () => void;
+  onBenchmarkExportMarkdown?: () => void;
   onSetTimeOfDay: (timeS: number) => void;
+  onShadowTechniqueInput: (technique: ShadowTechnique) => void;
+  onShadowStrengthInput: (strength: number) => void;
   onlinePlayers: readonly OnlinePlayer[];
   onTeleportTo: (playerId: string) => void;
   pointerLocked: boolean;
@@ -225,6 +231,35 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           }}
         />
       </div>
+      <div class="flex items-center justify-between gap-2 border-t border-white/20 py-2">
+        <label for="shadow-technique" class="text-gray-400">
+          shadows
+        </label>
+        <select
+          id="shadow-technique"
+          class="rounded border border-white/20 bg-black/50 px-2 py-1 text-xs text-white"
+          value={props.shadowTechnique}
+          onChange={(event) => props.onShadowTechniqueInput(event.currentTarget.value as ShadowTechnique)}
+        >
+          {SHADOW_TECHNIQUES.map((technique) => (
+            <option value={technique}>{formatShadowTechnique(technique)}</option>
+          ))}
+        </select>
+      </div>
+      <div class="flex items-center gap-2 pb-2">
+        <span class="shrink-0 text-gray-400">shadow strength</span>
+        <input
+          type="range"
+          min="0"
+          max="0.95"
+          step="0.01"
+          value={props.shadowStrength}
+          class="h-1 w-full cursor-pointer accent-blue-400"
+          disabled={props.shadowTechnique === "ambient-occlusion"}
+          onInput={(event) => props.onShadowStrengthInput(Number(event.currentTarget.value))}
+        />
+        <span class="w-10 text-right text-xs text-gray-300">{Math.round(props.shadowStrength * 100)}%</span>
+      </div>
       <div class="border-t border-white/20 pt-2">
         <div class="mb-2 rounded border border-white/20 bg-black/30 p-2">
           <div class="flex items-center justify-between">
@@ -238,7 +273,8 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
           </div>
           {props.benchmark.summary && (
             <div class="mt-1 text-xs text-gray-300">
-              avg {props.benchmark.summary.avgComputeMs.toFixed(2)}ms · p95 {props.benchmark.summary.p95ComputeMs.toFixed(2)}ms
+              avg {props.benchmark.summary.avgComputeMs.toFixed(2)}ms · p95{" "}
+              {props.benchmark.summary.p95ComputeMs.toFixed(2)}ms
             </div>
           )}
           <div class="mt-2 flex flex-wrap gap-1">
@@ -274,6 +310,14 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
             >
               Export CSV
             </Button>
+            <Button
+              variant="ghost"
+              class="text-xs"
+              disabled={!props.onBenchmarkExportMarkdown || !props.benchmark.summary}
+              onClick={props.onBenchmarkExportMarkdown}
+            >
+              Export MD
+            </Button>
           </div>
         </div>
         <div class="text-gray-400">online ({props.onlinePlayers.length})</div>
@@ -289,4 +333,10 @@ export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
       </div>
     </div>
   );
+}
+
+function formatShadowTechnique(technique: ShadowTechnique): string {
+  if (technique === "ambient-occlusion") return "Ambient occlusion";
+  if (technique === "shadow-map") return "Shadow map";
+  return "Shadow volume";
 }

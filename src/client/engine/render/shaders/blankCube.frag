@@ -1,7 +1,7 @@
 #version 300 es
 precision highp float;
 
-uniform vec4 uLightPos;
+uniform vec3 uLightDir;
 uniform vec3 uAmbient;
 uniform vec3 uSunColor;
 uniform float uTime;
@@ -9,6 +9,10 @@ uniform vec3 uCameraPos;
 uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
+uniform int uShadowTechnique;
+uniform float uShadowStrength;
+uniform sampler2D uShadowMap;
+uniform vec2 uShadowMapTexelSize;
 
 // Per-type LUT uniforms (indexed by CubeType, 20 entries each).
 // col1 = mix(color,          uLut1Fixed[type], uLut1Blend[type])
@@ -23,6 +27,7 @@ in vec4 normal;
 in vec4 wsPos;
 in vec2 uv;
 in vec3 color;
+in vec4 shadowPos;
 flat in float cubeType;
 flat in float cubeSeed;
 flat in vec4 faceAmbientOcclusion;
@@ -79,6 +84,33 @@ float fluidNoise(vec2 p, float t) {
   float slow = fbm(p * 0.9 + vec2(t * 0.35, -t * 0.27), 0.0);
   float fast = fbm(p * 2.4 + vec2(-t * 0.65, t * 0.45), 3.7);
   return 0.6 * slow + 0.5 * fast;
+}
+
+float sampleShadowMapVisibility(vec4 lightSpacePos, float dotNL) {
+  vec3 projected = lightSpacePos.xyz / max(lightSpacePos.w, 0.0001);
+  vec3 coord = projected * 0.5 + 0.5;
+  if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0 || coord.z > 1.0) {
+    return 1.0;
+  }
+
+  float bias = max(0.00075, 0.0024 * (1.0 - dotNL));
+  float visibility = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      float closestDepth = texture(uShadowMap, coord.xy + vec2(float(x), float(y)) * uShadowMapTexelSize).r;
+      visibility += coord.z - bias <= closestDepth ? 1.0 : 0.0;
+    }
+  }
+  return visibility / 9.0;
+}
+
+float shadowVolumeVisibility(vec3 worldPos, vec3 lightDir, vec3 normalDir) {
+  vec2 volumePlane = worldPos.xz - lightDir.xz * max(worldPos.y - 48.0, 0.0) * 0.38;
+  vec2 cell = floor(volumePlane * 0.12);
+  float silhouette = step(0.56, hash(cell, 13.9));
+  float sideFacing = smoothstep(0.0, 0.72, 1.0 - abs(dot(normalDir, lightDir)));
+  float extrusion = smoothstep(0.2, 1.0, 1.0 - dot(normalDir, lightDir));
+  return mix(1.0, 0.48, silhouette * sideFacing * extrusion);
 }
 
 void main() {
@@ -146,10 +178,12 @@ void main() {
     kd *= 0.92 + 0.16 * seed;
   }
 
-  // uLightPos is supplied by the render path as a world-space light position,
-  // so derive the incoming light direction per fragment from the fragment world position.
-  vec3 lightDir = normalize(uLightPos.xyz - wsPos.xyz);
+  vec3 lightDir = normalize(uLightDir);
   float dot_nl = clamp(dot(lightDir, normalize(normal.xyz)), 0.0, 1.0);
+  float shadowVisibility = 1.0;
+  if (uShadowTechnique == 1) {
+    shadowVisibility = mix(1.0 - clamp(uShadowStrength, 0.0, 0.95), 1.0, sampleShadowMapVisibility(shadowPos, dot_nl));
+  }
 
   // Smooth bilinear AO — interpolated per-fragment (not quantized to the texel grid)
   float aoLow = mix(faceAmbientOcclusion.x, faceAmbientOcclusion.w, uv.x);
@@ -166,9 +200,9 @@ void main() {
     // Water is lit by the sun but skips the heavy AO — dark cave water
     // otherwise reads as ink.
     float waterAO = mix(0.65, 1.0, aoFactor);
-    lit = kd * (uAmbient + dot_nl * uSunColor) * waterAO;
+    lit = kd * (uAmbient + dot_nl * uSunColor * shadowVisibility) * waterAO;
   } else {
-    lit = kd * (uAmbient + dot_nl * uSunColor) * aoFactor;
+    lit = kd * (uAmbient + dot_nl * uSunColor * shadowVisibility) * aoFactor;
   }
 
   vec3 toned = lit / (1.0 + lit * 0.5);

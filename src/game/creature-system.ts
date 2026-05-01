@@ -1,26 +1,16 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { CubeType } from "@/client/engine/render/cube-types";
 import { CHUNK_SIZE, chunkOrigin } from "@/game/chunk";
 import type { ChunkStorage } from "@/game/chunk-storage";
-import { CubeType } from "@/client/engine/render/cube-types";
-import {
-  createCreatureState,
-  deriveStats,
-  getMovesForLevel,
-  type CreatureState,
-} from "@/game/creature-progression";
 import type { CreaturePublicState } from "@/game/creature";
+import { type CreatureState, createCreatureState, deriveStats, getMovesForLevel } from "@/game/creature-progression";
 import { CREATURE_SPECIES, type CreatureSpeciesId } from "@/game/creature-species";
 import { PlacedObjectType } from "@/game/object-placement";
 import * as schema from "../server/schema";
 import type { GameSystem, SystemContext } from "./game-system";
 import type { PlayerSystem } from "./player-system";
-import type {
-  CreatureDespawnPacket,
-  CreatureSpawnPacket,
-  CreatureStatePacket,
-  ServerPacket,
-} from "./protocol";
+import type { CreatureDespawnPacket, CreatureSpawnPacket, CreatureStatePacket, ServerPacket } from "./protocol";
 
 const GLOBAL_WILD_CAP = 5;
 const PER_CHUNK_CAP = 2;
@@ -45,6 +35,13 @@ interface CreatureInstance {
   chunkKey: string;
   spawnPointKey: string;
   removed: boolean;
+}
+
+export interface BattleWildCreatureState extends CreatureState {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
 }
 
 interface SpawnPointCooldown {
@@ -211,9 +208,9 @@ export class CreatureSystem implements GameSystem {
     creatureId: string,
     playerPosition: { x: number; z: number },
     maxDistance = 8,
-  ): CreatureState | undefined {
+  ): BattleWildCreatureState | undefined {
     const creature = this.creatures.get(creatureId);
-    if (!creature || !creature.state.isWild) return undefined;
+    if (!creature?.state.isWild) return undefined;
 
     const dx = creature.x - playerPosition.x;
     const dz = creature.z - playerPosition.z;
@@ -227,6 +224,10 @@ export class CreatureSystem implements GameSystem {
       ...creature.state,
       stats: { ...creature.state.stats },
       knownMoves: [...creature.state.knownMoves],
+      x: creature.x,
+      y: creature.y,
+      z: creature.z,
+      yaw: creature.yaw,
     };
   }
 
@@ -256,12 +257,7 @@ export class CreatureSystem implements GameSystem {
         const nearbyWild = countWildWithinRadius(spawnPoint.x, spawnPoint.z, this.creatures, PER_PLAYER_RADIUS);
         if (nearbyWild >= PER_PLAYER_CAP) continue;
         if (
-          countWildWithinRadius(
-            spawnPoint.x + 0.5,
-            spawnPoint.z + 0.5,
-            this.creatures,
-            LOCAL_SPAWN_MIN_SEPARATION,
-          ) > 0
+          countWildWithinRadius(spawnPoint.x + 0.5, spawnPoint.z + 0.5, this.creatures, LOCAL_SPAWN_MIN_SEPARATION) > 0
         ) {
           continue;
         }
@@ -380,7 +376,9 @@ export class CreatureSystem implements GameSystem {
 
       const idx = localZ * CHUNK_SIZE + localX;
       const terrainY =
-        (chunk.terrainHeightMap.length > idx ? (chunk.terrainHeightMap[idx] as number) : (chunk.heightMap[idx] as number)) ?? 0;
+        (chunk.terrainHeightMap.length > idx
+          ? (chunk.terrainHeightMap[idx] as number)
+          : (chunk.heightMap[idx] as number)) ?? 0;
       const surfaceBlock = chunk.getBlock(localX, terrainY, localZ);
       if (surfaceBlock === CubeType.Air || surfaceBlock === CubeType.Water || surfaceBlock === CubeType.Lava) continue;
 

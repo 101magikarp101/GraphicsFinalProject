@@ -1,5 +1,6 @@
 import { newWebSocketRpcSession } from "capnweb";
 import { createContext, createResource, createSignal, onCleanup, type ParentProps, Show, useContext } from "solid-js";
+import { generateName, sanitizePlayerName } from "@/utils/name";
 import type { GameApi, PlayerCredentials, RoomSessionApi, ServerTick } from "../game/protocol";
 
 interface SessionContextValue {
@@ -34,8 +35,14 @@ export function SessionProvider(props: { name: string } & ParentProps) {
   });
 
   const [session] = createResource(async () => {
-    const authPromise = api.authenticate(props.name);
-    const [auth, credentials] = await Promise.all([authPromise, authPromise.credentials]);
+    const authName = sanitizePlayerName(props.name);
+    const auth = await api.authenticate(authName).catch((error) => {
+      console.error("Authentication failed; retrying with a fresh player name.", error);
+      const fallbackName = generateName();
+      window.localStorage.setItem("player-name", JSON.stringify(fallbackName));
+      return api.authenticate(fallbackName);
+    });
+    const credentials = await auth.credentials;
     return {
       credentials,
       join: (roomId: string, onTick: (tick: ServerTick) => void) => auth.join(roomId, onTick),

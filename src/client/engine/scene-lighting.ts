@@ -7,6 +7,7 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 
 export class SceneLighting {
   readonly lightPosition = new Float32Array(4);
+  readonly lightDirection = new Float32Array(3);
   /** Actual sun position (never flipped). Used by the skybox to place sun & moon. */
   readonly sunPosition = new Float32Array(4);
   readonly backgroundColor = new Float32Array(4);
@@ -44,6 +45,10 @@ export class SceneLighting {
     this.lightPosition[1] = sinA * 2000 * dirSign;
     this.lightPosition[2] = 600;
     this.lightPosition[3] = 1;
+    const lightLength = Math.hypot(this.lightPosition[0], this.lightPosition[1], this.lightPosition[2]) || 1;
+    this.lightDirection[0] = this.lightPosition[0] / lightLength;
+    this.lightDirection[1] = this.lightPosition[1] / lightLength;
+    this.lightDirection[2] = this.lightPosition[2] / lightLength;
     // Horizon glow — asymmetric bell pivoted slightly above the true horizon
     // (sinA = horizonPivot). The above-pivot wing is wide so the warm palette
     // lingers during the descent into sunset and the tail after sunrise; the

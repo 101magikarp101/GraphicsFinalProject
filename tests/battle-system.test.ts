@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BattleSystem } from "@/game/battle-system";
 
-function createSystem() {
+function createSystem(wildHp = 20) {
   const fakePlayerSystem = {
     getPlayerPosition: (_playerId: string) => ({ x: 0, y: 70, z: 0 }),
   };
@@ -18,8 +18,8 @@ function createSystem() {
       stats: {
         level: 5,
         experience: 125,
-        hp: 20,
-        maxHp: 20,
+        hp: wildHp,
+        maxHp: wildHp,
         attack: 15,
         defense: 12,
         specialAttack: 14,
@@ -35,6 +35,10 @@ function createSystem() {
 }
 
 describe("BattleSystem", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("enforces starter-first flow before battle", () => {
     const system = createSystem();
 
@@ -62,11 +66,17 @@ describe("BattleSystem", () => {
     expect(battlePacket).toBeDefined();
     if (!battlePacket || battlePacket.type !== "battleState") return;
     expect(battlePacket.battle?.active).toBe(true);
+    expect(battlePacket.battle?.phase).toBe("selecting");
+    expect(battlePacket.battle?.revision).toBeGreaterThan(0);
+    expect(battlePacket.battle?.starter.x).toBeTypeOf("number");
+    expect(battlePacket.battle?.wild.x).toBeTypeOf("number");
     expect(battlePacket.battle?.canSelectMove).toBe(true);
     expect((battlePacket.battle?.availableMoves.length ?? 0) > 0).toBe(true);
   });
 
   it("resolves a selected turn and syncs packets without soft-locking", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
     const system = createSystem();
 
     expect(system.chooseStarter("p1", "emberlynx")).toBe(true);
@@ -84,6 +94,46 @@ describe("BattleSystem", () => {
     expect(starterPacket).toBeDefined();
     expect(battlePacket).toBeDefined();
     if (!battlePacket || battlePacket.type !== "battleState") return;
-    expect(battlePacket.battle === null || battlePacket.battle.active).toBe(true);
+    expect(battlePacket.battle?.phase).toBe("resolving");
+    expect(battlePacket.battle?.canSelectMove).toBe(false);
+    expect(battlePacket.battle?.lastTurnAnimation?.actions.length).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(3_000);
+    expect(system.tick()).toBe(true);
+
+    const finalPackets = system.packetsFor("p1", { onlinePlayerIds: new Set(["p1"]) });
+    const finalBattlePacket = finalPackets.find((packet) => packet.type === "battleState");
+    expect(finalBattlePacket).toBeDefined();
+    if (!finalBattlePacket || finalBattlePacket.type !== "battleState") return;
+    expect(finalBattlePacket.battle === null || finalBattlePacket.battle.canSelectMove).toBe(true);
+  });
+
+  it("keeps battle active during victory animation then applies XP", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const system = createSystem(1);
+
+    expect(system.chooseStarter("p1", "emberlynx")).toBe(true);
+    expect(system.startBattle("p1", "wild_1")).toBe(true);
+    expect(system.chooseBattleMove("p1", "ember_jolt")).toBe(true);
+    expect(system.tick()).toBe(true);
+
+    let packets = system.packetsFor("p1", { onlinePlayerIds: new Set(["p1"]) });
+    let battlePacket = packets.find((packet) => packet.type === "battleState");
+    expect(battlePacket).toBeDefined();
+    if (!battlePacket || battlePacket.type !== "battleState") return;
+    expect(battlePacket.battle?.active).toBe(true);
+    expect(battlePacket.battle?.phase).toBe("resolving");
+
+    vi.advanceTimersByTime(3_000);
+    expect(system.tick()).toBe(true);
+
+    packets = system.packetsFor("p1", { onlinePlayerIds: new Set(["p1"]) });
+    battlePacket = packets.find((packet) => packet.type === "battleState");
+    const starterPacket = packets.find((packet) => packet.type === "starterState");
+    expect(battlePacket && battlePacket.type === "battleState" ? battlePacket.battle : undefined).toBeNull();
+    expect(
+      starterPacket && starterPacket.type === "starterState" ? starterPacket.starter?.experience : 0,
+    ).toBeGreaterThan(125);
   });
 });

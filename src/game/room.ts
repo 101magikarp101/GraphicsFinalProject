@@ -1,23 +1,22 @@
 import { DurableObject } from "cloudflare:workers";
 import { Alarms } from "@cloudflare/actors/alarms";
 import { RpcTarget } from "capnweb";
-import { eq } from "drizzle-orm";
 import { type DrizzleSqliteDODatabase, drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import type { ChunkGen } from "../server/chunk-gen";
 import * as schema from "../server/schema";
+import { BattleSystem } from "./battle-system";
 import { BlockSystem, type BlockSystemOptions } from "./block-system";
 import { ChunkStorage } from "./chunk-storage";
-import { CreatureSystem } from "./creature-system";
-import { BattleSystem } from "./battle-system";
 import type { InventoryClickTarget } from "./crafting";
+import type { CreatureSpeciesId } from "./creature-species";
+import { CreatureSystem } from "./creature-system";
 import { FluidSystem } from "./fluid-system";
 import type { GameSystem } from "./game-system";
 import { serverLog, serverWarn } from "./logging";
 import type { PlayerAttackPacket, PlayerPositionPacket } from "./player";
 import { PlayerSystem } from "./player-system";
-import type { CreatureSpeciesId } from "./creature-species";
 import type {
   AuthenticatedApi,
   GameApi,

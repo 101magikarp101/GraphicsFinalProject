@@ -34,6 +34,8 @@ export default function GameView() {
     setRenderDistance,
     setShowDiagnostics,
     setShowMobHighlight,
+    setShadowTechnique,
+    setShadowStrength,
   } = createGameplayPreferences();
   const ui = createGameplayUiState();
   const benchmarkConfig =
@@ -53,6 +55,8 @@ export default function GameView() {
       invertY: () => preferences.invertY,
       renderDistance: () => preferences.renderDistance,
       showMobHighlight: () => preferences.showMobHighlight,
+      shadowTechnique: () => preferences.shadowTechnique,
+      shadowStrength: () => preferences.shadowStrength,
     },
     inputEnabled: () => !interactionBlocked(),
     shortcuts: {
@@ -195,6 +199,7 @@ export default function GameView() {
           hidden={interactionBlocked()}
           onSelectHotbarSlot={selectHotbarSlot}
           player={room.player}
+          starter={room.starterState}
         />
       </Show>
       <InventoryPanel
@@ -227,11 +232,16 @@ export default function GameView() {
             packetsPerSec={game.diagnostics.server.packetsPerSec}
             timeOfDayS={game.diagnostics.server.timeOfDayS}
             benchmark={game.diagnostics.benchmark}
+            shadowTechnique={preferences.shadowTechnique}
+            shadowStrength={preferences.shadowStrength}
             onBenchmarkStart={game.benchmark.canRun ? game.benchmark.start : undefined}
             onBenchmarkStop={game.benchmark.canRun ? game.benchmark.stop : undefined}
             onBenchmarkExportJson={game.benchmark.canRun ? game.benchmark.exportJson : undefined}
             onBenchmarkExportCsv={game.benchmark.canRun ? game.benchmark.exportCsv : undefined}
+            onBenchmarkExportMarkdown={game.benchmark.canRun ? game.benchmark.exportMarkdown : undefined}
             onSetTimeOfDay={(timeS) => room.session()?.setTimeOfDay(timeS)}
+            onShadowTechniqueInput={setShadowTechnique}
+            onShadowStrengthInput={setShadowStrength}
             onlinePlayers={Object.values(room.remotePlayers)}
             onTeleportTo={(id) => {
               const target = room.remotePlayers[id];

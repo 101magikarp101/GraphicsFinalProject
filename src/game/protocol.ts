@@ -1,9 +1,9 @@
-import type { InventoryClickTarget, InventoryUiState } from "./crafting";
 import type { BattleSessionState, StarterCreatureState } from "./battle";
+import type { InventoryClickTarget, InventoryUiState } from "./crafting";
 import type { CreaturePublicState } from "./creature";
+import type { CreatureSpeciesId } from "./creature-species";
 import type { PlacedObject, PlacedObjectType } from "./object-placement";
 import type { PlayerAttackPacket, PlayerPositionPacket, PlayerPublicState, PlayerState } from "./player";
-import type { CreatureSpeciesId } from "./creature-species";
 
 /** Credentials returned after successful authentication. */
 export interface PlayerCredentials {

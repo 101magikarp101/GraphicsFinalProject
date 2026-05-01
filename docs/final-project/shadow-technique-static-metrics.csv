@@ -1,0 +1,4 @@
+technique,primary_algorithm,gpu_passes,extra_gpu_memory_mb,extra_geometry_per_visible_cube,shadow_strength_control,expected_quality,known_artifacts
+ambient-occlusion,voxel face ambient occlusion,1,0,0,no,stable contact shading,no cast shadows
+shadow-map,directional depth texture with PCF sampling,2,16,0,yes,directional terrain cast shadows,aliasing and depth-bias acne/peter-panning
+shadow-volume,z-fail stencil shadow volumes with full-screen masked darkening,3,2.1,up to 96 stencil vertices,yes,pixel-stable hard shadow masks,finite extrusion and fill-rate cost

@@ -1,6 +1,6 @@
 precision mediump float;
 
-uniform vec4 uLightPos;
+uniform vec3 uLightDir;
 uniform mat4 uView;
 uniform mat4 uProj;
 
@@ -32,7 +32,7 @@ void main() {
     localNormal.y,
     -localNormal.x * sy + localNormal.z * cy
   ));
-  vec3 lightDir = normalize(uLightPos.xyz - worldPos);
+  vec3 lightDir = normalize(uLightDir);
 
   gl_Position = uProj * uView * vec4(worldPos, 1.0);
   lightMix = clamp(dot(rotatedNormal, lightDir) * 0.65 + 0.4, 0.22, 1.0);

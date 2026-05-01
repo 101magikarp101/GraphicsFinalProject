@@ -1,13 +1,13 @@
 import type { CreaturePublicState } from "@/game/creature";
 import creatureFSText from "../render/shaders/creature.frag";
+import creatureVSText from "../render/shaders/creature.vert";
 import creatureHighlightFSText from "../render/shaders/creature-highlight.frag";
 import creatureHighlightVSText from "../render/shaders/creature-highlight.vert";
-import creatureVSText from "../render/shaders/creature.vert";
 import { createCreatureModelGeometry } from "./creature-model";
 import {
+  type CreatureRenderState,
   interpolateCreatureRenderState,
   packCreatureRenderStates,
-  type CreatureRenderState,
 } from "./creature-render-state";
 import type { EntityPassDef, EntityPipelineConfig } from "./pipeline";
 

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Final Project Report Draft</title>
+    <style>
+      body {
+        margin: 0;
+        font: 10.5pt/1.35 Arial, sans-serif;
+        color: #111827;
+      }
+      main {
+        max-width: 7.2in;
+        margin: 0 auto;
+        padding: 0.45in 0.35in;
+      }
+      h1 {
+        margin: 0 0 0.16in;
+        font-size: 15pt;
+      }
+      h2 {
+        margin: 0.18in 0 0.08in;
+        font-size: 12pt;
+      }
+      p {
+        margin: 0 0 0.08in;
+      }
+      code {
+        font-family: Menlo, Consolas, monospace;
+        font-size: 9.5pt;
+      }
+      @media print {
+        main {
+          padding: 0;
+        }
+        h2 {
+          break-before: page;
+        }
+        h2:first-of-type {
+          break-before: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Pixelmon-Style Voxel Game with Advanced Shadow Rasterization</h1>
+      <h2>1. Goals and Algorithms</h2>
+      <p>
+        This project extends a Minecraft-like voxel renderer into a playable Pixelmon-style graphics demo with original
+        blocky creatures, wild spawning, starter selection, turn-based battles, real-time 3D attacks, progression, and a
+        runtime comparison of voxel ambient occlusion, shadow maps, and stencil shadow volumes.
+      </p>
+      <p>
+        Ambient occlusion is the baseline. Each visible cube carries per-face vertex occlusion from neighboring voxel
+        occupancy. The fragment shader bilinearly interpolates four values and applies
+        <code>AO = mix(0.3, 1.0, pow(clamp(ao / 3, 0, 1), 0.75))</code>. It is stable and cheap, but it only
+        approximates local contact darkness.
+      </p>
+      <p>
+        Shadow mapping uses a directional light-space camera. A fragment position <code>p</code> is transformed by
+        <code>LVP * p</code>, compared against a depth texture with slope-scaled bias, and filtered with 3x3 PCF. The
+        shadow-strength slider controls direct-light attenuation with
+        <code>direct = mix(1 - strength, 1, visibility)</code>.
+      </p>
+      <p>
+        Stencil shadow volumes use the z-fail method. The sun/moon is a normalized directional light. For each cube,
+        faces with <code>dot(n, l) &gt; 0</code> form the front cap; the same cap is extruded in direction
+        <code>-l</code>; silhouette edges are detected where adjacent face signs differ and extruded into quads. The
+        closed volume is rendered into the stencil buffer with color/depth writes disabled. Back faces increment on
+        depth fail, front faces decrement on depth fail, and pixels with nonzero stencil are darkened by a masked
+        overlay.
+      </p>
+      <p>
+        References: NVIDIA GPU Gems 3 Chapter 11, Paul’s Projects OpenGL shadow volume notes, and OpenGL SIGGRAPH 1999
+        stencil shadow volume notes.
+      </p>
+
+      <h2>2. Implementation Engineering, Results, and Limitations</h2>
+      <p>
+        The renderer is centered on <code>RenderView</code> in <code>src/client/engine/render/renderer.ts</code>. Normal
+        terrain uses <code>blankCube.vert/frag</code>, shadow mapping uses <code>shadowMap.vert/frag</code>, and stencil
+        volumes use <code>shadowVolume.vert/frag</code> plus <code>shadowOverlay.vert/frag</code>. The diagnostics HUD
+        exposes runtime technique and strength controls, and preferences persist them.
+      </p>
+      <p>
+        The shadow-volume geometry builder is isolated in
+        <code>src/client/engine/render/shadow-volume.ts</code>. Unit tests verify closure, outward winding, and
+        extrusion direction. Benchmark exports include JSON, CSV, Markdown, and SVG. Static comparison artifacts are in
+        <code>docs/final-project/</code>; runtime capture is implemented by
+        <code>scripts/capture-shadow-benchmarks.mjs</code>.
+      </p>
+      <p>
+        Known limitations: shadow maps currently use terrain cubes as the main caster/receiver path. Shadow volumes
+        cast from visible terrain cubes and darken the rendered scene through a stencil mask, but the far cap is finite
+        rather than truly at infinity because WebGL lacks desktop depth-clamp behavior. Both advanced techniques are
+        hard-shadow methods; soft shadows are only approximated by PCF in the shadow-map path. Gameplay is demo-ready,
+        but balance and expansion to all 18 creature types remain future work.
+      </p>
+    </main>
+  </body>
+</html>

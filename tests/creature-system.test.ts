@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { Biome } from "@/game/biome";
 import { CreatureSystem } from "@/game/creature-system";
 import { PlacedObjectCategory, PlacedObjectType } from "@/game/object-placement";
-import { Biome } from "@/game/biome";
 
 function createSystem() {
   const fakeChunk = {

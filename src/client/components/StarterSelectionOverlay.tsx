@@ -24,6 +24,11 @@ const STARTERS: Array<{ speciesId: CreatureSpeciesId; title: string; description
 ];
 
 export function StarterSelectionOverlay(props: StarterSelectionOverlayProps) {
+  const selectStarter = (speciesId: CreatureSpeciesId) => {
+    if (props.disabled) return;
+    props.onSelectStarter(speciesId);
+  };
+
   return (
     <div class="absolute inset-0 z-40 flex items-center justify-center bg-[#090b12cc] p-4">
       <div class="w-full max-w-3xl border-3 border-[#1e2435] bg-[#0f1422] p-5 shadow-[0_12px_40px_rgba(0,0,0,0.6)]">
@@ -39,10 +44,19 @@ export function StarterSelectionOverlay(props: StarterSelectionOverlayProps) {
               type="button"
               class="cursor-pointer border-2 border-[#2a3557] bg-[#131c30] p-4 text-left transition-colors hover:border-[#4f6fcb] hover:bg-[#1a2743] disabled:cursor-not-allowed disabled:opacity-60"
               disabled={props.disabled}
-              onClick={() => props.onSelectStarter(starter.speciesId)}
+              onClick={() => selectStarter(starter.speciesId)}
+              onContextMenu={(event) => event.preventDefault()}
+              onMouseDown={(event) => {
+                if (event.button === 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                selectStarter(starter.speciesId);
+              }}
             >
               <div class="font-mono text-lg font-black uppercase tracking-[0.06em] text-white">{starter.title}</div>
-              <div class="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[#b7c5f5]">{starter.description}</div>
+              <div class="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[#b7c5f5]">
+                {starter.description}
+              </div>
             </button>
           ))}
         </div>

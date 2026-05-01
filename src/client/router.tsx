@@ -1,6 +1,6 @@
 import { makePersisted } from "@solid-primitives/storage";
-import { createSignal, Suspense } from "solid-js";
-import { generateName } from "@/utils/name";
+import { createEffect, createSignal, Suspense } from "solid-js";
+import { generateName, sanitizePlayerName } from "@/utils/name";
 import { Spinner } from "./components/Spinner";
 import { SessionProvider } from "./session";
 import { worldReady } from "./state/loading";
@@ -11,12 +11,14 @@ export default function Router() {
   const [name, setName] = makePersisted(createSignal(generateName()), {
     name: "player-name",
   });
-  // persist player name to localStorage, makePersisted isn't working properly for some reason ._.
-  setName(name());
+  createEffect(() => {
+    const sanitized = sanitizePlayerName(name());
+    if (sanitized !== name()) setName(sanitized);
+  });
 
   return (
     <Suspense>
-      <SessionProvider name={name()}>
+      <SessionProvider name={sanitizePlayerName(name())}>
         <GameView />
       </SessionProvider>
       <div

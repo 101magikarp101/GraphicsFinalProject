@@ -210,10 +210,9 @@ export type CreatureSpeciesId = (typeof SPECIES)[number]["id"];
 
 export const CREATURE_SPECIES: readonly (CreatureSpecies & { id: CreatureSpeciesId })[] = SPECIES;
 
-export const CREATURE_SPECIES_BY_ID = Object.fromEntries(CREATURE_SPECIES.map((species) => [species.id, species])) as Record<
-  CreatureSpeciesId,
-  CreatureSpecies & { id: CreatureSpeciesId }
->;
+export const CREATURE_SPECIES_BY_ID = Object.fromEntries(
+  CREATURE_SPECIES.map((species) => [species.id, species]),
+) as Record<CreatureSpeciesId, CreatureSpecies & { id: CreatureSpeciesId }>;
 
 export function isCreatureSpeciesId(value: string): value is CreatureSpeciesId {
   return value in CREATURE_SPECIES_BY_ID;

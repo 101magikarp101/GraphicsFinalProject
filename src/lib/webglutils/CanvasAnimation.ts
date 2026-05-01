@@ -63,6 +63,7 @@ export class WebGLUtilities {
   public static requestWebGLContext(canvas: HTMLCanvasElement): WebGL2RenderingContext {
     const ctx = canvas.getContext("webgl2", {
       preserveDrawingBuffer: true,
+      stencil: true,
     });
 
     if (!ctx) {

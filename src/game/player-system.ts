@@ -1,7 +1,11 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { CubeType } from "@/client/engine/render/cube-types";
 import type * as schema from "../server/schema";
 import * as playerSchema from "../server/schema";
+import { sampleColumn } from "./biome";
+// Returns the spawn position at the first solid, walkable block at (0, 20) using the world seed.
+import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkOrigin } from "./chunk";
 import {
   cloneInventoryUiState,
   consumeCraftingIngredients,
@@ -12,6 +16,7 @@ import {
 } from "./crafting";
 import type { GameSystem, SystemContext } from "./game-system";
 import { ITEM_DEFINITIONS_BY_ID } from "./items";
+import { serverLog } from "./logging";
 import {
   cloneInventorySlot,
   clonePlayerState,
@@ -25,6 +30,7 @@ import {
   normalizeInventory,
   PLAYER_MAX_FALL_SPEED,
   PLAYER_SPEED,
+  PLAYER_SPRINT_MULTIPLIER,
   Player,
   type PlayerAttackPacket,
   type PlayerPositionPacket,
@@ -34,13 +40,6 @@ import {
 } from "./player";
 import { canTargetPlayer } from "./player-targeting";
 import type { ServerPacket } from "./protocol";
-import { serverLog } from "./logging";
-
-import { sampleColumn } from "./biome";
-
-// Returns the spawn position at the first solid, walkable block at (0, 20) using the world seed.
-import { CHUNK_SIZE, Chunk, CHUNK_HEIGHT, chunkOrigin } from "./chunk";
-import { CubeType } from "@/client/engine/render/cube-types";
 
 interface SpawnChunkProvider {
   getChunk(originX: number, originZ: number): Chunk | null;
@@ -532,7 +531,7 @@ export class PlayerSystem implements GameSystem {
 
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
-    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxHorizontal = PLAYER_SPEED * PLAYER_SPRINT_MULTIPLIER * elapsedSeconds + MOVEMENT_TOLERANCE;
     const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;
@@ -542,7 +541,7 @@ export class PlayerSystem implements GameSystem {
 
   private isPlausibleAttack(prev: PlayerState, packet: PlayerAttackPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
-    const maxHorizontal = PLAYER_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxHorizontal = PLAYER_SPEED * PLAYER_SPRINT_MULTIPLIER * elapsedSeconds + MOVEMENT_TOLERANCE;
     const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;

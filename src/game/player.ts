@@ -4,6 +4,7 @@ import { getItemDamage, ITEM_DEFINITIONS_BY_ID, type ItemId, isItemId } from "./
 
 // minceraft yoinked
 export const PLAYER_SPEED = 4.317;
+export const PLAYER_SPRINT_MULTIPLIER = 1.55;
 export const PLAYER_GRAVITY = 32;
 export const PLAYER_JUMP_VELOCITY = 8.944;
 export const PLAYER_MAX_FALL_SPEED = 78.4;
@@ -49,6 +50,7 @@ export interface PlayerInput {
   yaw: number;
   pitch: number;
   jump: boolean;
+  sprint?: boolean;
 }
 
 const GROUND_EPSILON = 1e-3;
@@ -279,7 +281,7 @@ export class Player extends Entity<PlayerState, PlayerInput> {
    * `PLAYER_SPEED`, and — when a `collisionQuery` is wired — applies gravity,
    * jump, and per-axis collision against the voxel world.
    */
-  step({ dx, dz, dtSeconds, yaw, pitch, jump }: PlayerInput) {
+  step({ dx, dz, dtSeconds, yaw, pitch, jump, sprint }: PlayerInput) {
     if (
       !Number.isFinite(dx) ||
       !Number.isFinite(dz) ||
@@ -302,7 +304,8 @@ export class Player extends Entity<PlayerState, PlayerInput> {
     let nextX = currentX;
     let nextZ = currentZ;
     if (mag2 > 0) {
-      const inv = (PLAYER_SPEED * dtSeconds) / Math.sqrt(mag2);
+      const speed = PLAYER_SPEED * (sprint ? PLAYER_SPRINT_MULTIPLIER : 1);
+      const inv = (speed * dtSeconds) / Math.sqrt(mag2);
       nextX = clampCoord(currentX + dx * inv);
       nextZ = clampCoord(currentZ + dz * inv);
     }

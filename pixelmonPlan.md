@@ -35,6 +35,20 @@ Start with 3 core types (Fire/Water/Grass), then scale architecture to all 18 ty
 7. Performance/accuracy comparison and reporting artifacts
 8. Balance, polish, and expansion roadmap to full 18-type system
 
+## Current Implementation Status
+
+Phases 0-6 are implemented for the final demo path:
+
+1. Benchmark mode and diagnostics are wired with JSON/CSV/Markdown export support.
+2. Original creature data, type interactions, moves, XP, and progression are implemented.
+3. Wild spawning, caps, lifecycle state, and replication are implemented.
+4. Blocky creature rendering and battle effect rendering are implemented.
+5. Starter selection, encounter initiation, turn-based battle, move visuals, battle HUD, XP rewards, and persistence are implemented.
+6. Runtime-switchable ambient occlusion, shadow mapping, and stencil shadow volumes are implemented with shadow-strength controls.
+7. Report artifacts, static comparison metrics, and a runtime benchmark capture script are in `docs/final-project/` and `scripts/capture-shadow-benchmarks.mjs`.
+
+Remaining polish after submission would be expansion to all 18 types, deeper balance tuning, and broader screenshot/video capture.
+
 ---
 
 ## Phase 0: Baseline + Instrumentation Hardening
@@ -406,4 +420,3 @@ Project is complete for this milestone when:
 5. Shadow maps, shadow volumes, and AO variant all render and are runtime-switchable
 6. Performance/accuracy comparison outputs are generated and report-ready
 7. Existing core game systems remain functional with no major regressions
-

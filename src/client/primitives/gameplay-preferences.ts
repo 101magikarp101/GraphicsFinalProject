@@ -1,5 +1,7 @@
 import { createEffect } from "solid-js";
 import { createStore } from "solid-js/store";
+import { isShadowTechnique, type ShadowTechnique } from "@/client/engine/render/shadow-technique";
+import { sanitizePlayerName } from "@/utils/name";
 import { DEFAULT_RENDER_DISTANCE, MAX_RENDER_DISTANCE, MIN_RENDER_DISTANCE } from "../engine/chunks";
 
 const STORAGE_KEY = "gameplay-preferences";
@@ -8,6 +10,8 @@ const MAX_PLAYER_NAME_LENGTH = 32;
 const DEFAULT_PLAYER_NAME = "Player";
 const MIN_MOUSE_SENSITIVITY = 0.25;
 const MAX_MOUSE_SENSITIVITY = 2;
+const MIN_SHADOW_STRENGTH = 0;
+const MAX_SHADOW_STRENGTH = 0.95;
 
 export interface GameplayPreferences {
   pendingPlayerName: string;
@@ -16,6 +20,8 @@ export interface GameplayPreferences {
   renderDistance: number;
   showDiagnostics: boolean;
   showMobHighlight: boolean;
+  shadowTechnique: ShadowTechnique;
+  shadowStrength: number;
 }
 
 const DEFAULT_PREFERENCES: GameplayPreferences = {
@@ -25,6 +31,8 @@ const DEFAULT_PREFERENCES: GameplayPreferences = {
   renderDistance: DEFAULT_RENDER_DISTANCE,
   showDiagnostics: true,
   showMobHighlight: true,
+  shadowTechnique: "ambient-occlusion",
+  shadowStrength: 0.62,
 };
 
 export function createGameplayPreferences() {
@@ -40,6 +48,8 @@ export function createGameplayPreferences() {
       renderDistance: preferences.renderDistance,
       showDiagnostics: preferences.showDiagnostics,
       showMobHighlight: preferences.showMobHighlight,
+      shadowTechnique: preferences.shadowTechnique,
+      shadowStrength: preferences.shadowStrength,
     } satisfies GameplayPreferences);
 
     window.localStorage.setItem(STORAGE_KEY, serialized);
@@ -69,6 +79,12 @@ export function createGameplayPreferences() {
     setShowMobHighlight(showMobHighlight: boolean) {
       setPreferences("showMobHighlight", showMobHighlight);
     },
+    setShadowTechnique(shadowTechnique: ShadowTechnique) {
+      setPreferences("shadowTechnique", shadowTechnique);
+    },
+    setShadowStrength(shadowStrength: number) {
+      setPreferences("shadowStrength", clampShadowStrength(shadowStrength));
+    },
   } as const;
 }
 
@@ -95,6 +111,8 @@ function readGameplayPreferences(): GameplayPreferences {
       renderDistance: clampRenderDistance(parsed.renderDistance ?? DEFAULT_PREFERENCES.renderDistance),
       showDiagnostics: parsed.showDiagnostics ?? DEFAULT_PREFERENCES.showDiagnostics,
       showMobHighlight: parsed.showMobHighlight ?? DEFAULT_PREFERENCES.showMobHighlight,
+      shadowTechnique: parseShadowTechnique(parsed.shadowTechnique),
+      shadowStrength: clampShadowStrength(parsed.shadowStrength ?? DEFAULT_PREFERENCES.shadowStrength),
     };
   } catch {
     return {
@@ -116,15 +134,19 @@ function readStoredPlayerName(): string {
   return raw.trim();
 }
 
-function sanitizePlayerName(name: string): string {
-  const trimmed = name.trim().slice(0, MAX_PLAYER_NAME_LENGTH);
-  return trimmed || DEFAULT_PLAYER_NAME;
-}
-
 function clampMouseSensitivity(value: number): number {
   return Math.min(MAX_MOUSE_SENSITIVITY, Math.max(MIN_MOUSE_SENSITIVITY, Math.round(value * 100) / 100));
 }
 
 function clampRenderDistance(value: number): number {
   return Math.min(MAX_RENDER_DISTANCE, Math.max(MIN_RENDER_DISTANCE, Math.round(value)));
+}
+
+function clampShadowStrength(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_PREFERENCES.shadowStrength;
+  return Math.min(MAX_SHADOW_STRENGTH, Math.max(MIN_SHADOW_STRENGTH, Math.round(value * 100) / 100));
+}
+
+function parseShadowTechnique(value: unknown): ShadowTechnique {
+  return typeof value === "string" && isShadowTechnique(value) ? value : DEFAULT_PREFERENCES.shadowTechnique;
 }
