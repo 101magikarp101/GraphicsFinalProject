@@ -5,7 +5,10 @@ import {
   createDirectionalCubeShadowVolumeGeometry,
   SHADOW_VOLUME_EXTRUSION_DISTANCE,
 } from "@/client/engine/render/shadow-volume";
-import { buildShadowVolumeCasterPositions } from "@/client/engine/render/shadow-volume-casters";
+import {
+  buildShadowVolumeCasterPositions,
+  shadowVolumeCasterDirectionKey,
+} from "@/client/engine/render/shadow-volume-casters";
 
 describe("directional shadow volume geometry", () => {
   it("builds a closed diagonal-light cube volume", () => {
@@ -79,6 +82,13 @@ describe("directional shadow volume geometry", () => {
       expect(delta.z).toBeCloseTo(-lightDirection.z * SHADOW_VOLUME_EXTRUSION_DISTANCE, 4);
     }
   });
+
+  it("keeps the same encoded topology while the light stays in the same octant", () => {
+    const lowAngle = createDirectionalCubeShadowVolumeGeometry(new Vec3([0.1, 0.9, -0.2]).normalize());
+    const steepAngle = createDirectionalCubeShadowVolumeGeometry(new Vec3([0.6, 0.3, -0.7]).normalize());
+
+    expect([...lowAngle]).toEqual([...steepAngle]);
+  });
 });
 
 describe("shadow volume caster selection", () => {
@@ -151,6 +161,43 @@ describe("shadow volume caster selection", () => {
     expect(casters.count).toBe(2);
     expect([...casters.positions]).toEqual([4, 1, 4, 0, 4, 3, 4, 0]);
     expect([...casters.scales]).toEqual([1, 1, 1, 0, 1, 1, 1, 0]);
+  });
+
+  it("skips stacked blocks that have no exposed face toward the light", () => {
+    const casters = buildShadowVolumeCasterPositions(
+      cubePositions([
+        [0, 0, 0, CubeType.Grass],
+        [0, 1, 0, CubeType.Grass],
+      ]),
+      new Vec3([0, 1, 0]),
+    );
+
+    expect(casters.count).toBe(1);
+    expect([...casters.positions]).toEqual([0, 1, 0, 0]);
+    expect([...casters.scales]).toEqual([1, 1, 1, 0]);
+  });
+
+  it("keeps lower stacked blocks when a side face is exposed to slanted light", () => {
+    const casters = buildShadowVolumeCasterPositions(
+      cubePositions([
+        [0, 0, 0, CubeType.Grass],
+        [0, 1, 0, CubeType.Grass],
+      ]),
+      new Vec3([1, 1, 0]).normalize(),
+    );
+
+    expect(casters.count).toBe(2);
+    expect([...casters.positions]).toEqual([0, 0, 0, 0, 0, 1, 0, 0]);
+    expect([...casters.scales]).toEqual([1, 1, 1, 0, 1, 1, 1, 0]);
+  });
+
+  it("keys caster rebuilds by light-facing axis signs instead of continuous magnitude", () => {
+    expect(shadowVolumeCasterDirectionKey(new Vec3([0.1, 0.9, -0.2]).normalize())).toBe(
+      shadowVolumeCasterDirectionKey(new Vec3([0.6, 0.3, -0.7]).normalize()),
+    );
+    expect(shadowVolumeCasterDirectionKey(new Vec3([-0.1, 0.9, -0.2]).normalize())).not.toBe(
+      shadowVolumeCasterDirectionKey(new Vec3([0.6, 0.3, -0.7]).normalize()),
+    );
   });
 });
 

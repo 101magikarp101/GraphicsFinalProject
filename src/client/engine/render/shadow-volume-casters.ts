@@ -6,11 +6,20 @@ export interface ShadowVolumeCasterSet {
   count: number;
 }
 
-export function buildShadowVolumeCasterPositions(cubePositions: Float32Array): ShadowVolumeCasterSet {
+export type ShadowVolumeLightDirection = Readonly<{ [index: number]: number }>;
+
+const DEFAULT_LIGHT_DIRECTION: ShadowVolumeLightDirection = [0, 1, 0];
+const LIGHT_FACE_EPSILON = 1e-6;
+
+export function buildShadowVolumeCasterPositions(
+  cubePositions: Float32Array,
+  lightDirection: ShadowVolumeLightDirection = DEFAULT_LIGHT_DIRECTION,
+): ShadowVolumeCasterSet {
   const count = cubePositions.length / 4;
   if (count === 0) return emptyCasterSet();
 
-  const groups = new Map<string, { y: number; cells: Map<string, { x: number; z: number }> }>();
+  const blocks: Array<{ x: number; y: number; z: number }> = [];
+  const occupied = new Set<string>();
   for (let i = 0; i < count; i++) {
     const offset = i * 4;
     const type = Math.round(cubePositions[offset + 3] ?? 0) as CubeType;
@@ -18,6 +27,14 @@ export function buildShadowVolumeCasterPositions(cubePositions: Float32Array): S
     const x = Math.round(cubePositions[offset] ?? 0);
     const y = Math.round(cubePositions[offset + 1] ?? 0);
     const z = Math.round(cubePositions[offset + 2] ?? 0);
+    blocks.push({ x, y, z });
+    occupied.add(blockKey(x, y, z));
+  }
+  if (blocks.length === 0) return emptyCasterSet();
+
+  const groups = new Map<string, { y: number; cells: Map<string, { x: number; z: number }> }>();
+  for (const { x, y, z } of blocks) {
+    if (!hasExposedLightFacingFace(x, y, z, occupied, lightDirection)) continue;
     const key = `${y}`;
     let group = groups.get(key);
     if (!group) {
@@ -40,8 +57,43 @@ export function buildShadowVolumeCasterPositions(cubePositions: Float32Array): S
   return { positions: new Float32Array(positions), scales: new Float32Array(scales), count: positions.length / 4 };
 }
 
+export function shadowVolumeCasterDirectionKey(lightDirection: ShadowVolumeLightDirection): string {
+  return `${axisSign(lightDirection[0] ?? 0)},${axisSign(lightDirection[1] ?? 0)},${axisSign(lightDirection[2] ?? 0)}`;
+}
+
 function isShadowVolumeCasterType(type: CubeType): boolean {
   return type !== CubeType.Air && type !== CubeType.Water && type !== CubeType.Lava && type !== CubeType.Bedrock;
+}
+
+function hasExposedLightFacingFace(
+  x: number,
+  y: number,
+  z: number,
+  occupied: ReadonlySet<string>,
+  lightDirection: ShadowVolumeLightDirection,
+): boolean {
+  const lightX = lightDirection[0] ?? 0;
+  const lightY = lightDirection[1] ?? 0;
+  const lightZ = lightDirection[2] ?? 0;
+
+  return (
+    (lightX > LIGHT_FACE_EPSILON && !occupied.has(blockKey(x + 1, y, z))) ||
+    (lightX < -LIGHT_FACE_EPSILON && !occupied.has(blockKey(x - 1, y, z))) ||
+    (lightY > LIGHT_FACE_EPSILON && !occupied.has(blockKey(x, y + 1, z))) ||
+    (lightY < -LIGHT_FACE_EPSILON && !occupied.has(blockKey(x, y - 1, z))) ||
+    (lightZ > LIGHT_FACE_EPSILON && !occupied.has(blockKey(x, y, z + 1))) ||
+    (lightZ < -LIGHT_FACE_EPSILON && !occupied.has(blockKey(x, y, z - 1)))
+  );
+}
+
+function axisSign(value: number): -1 | 0 | 1 {
+  if (value > LIGHT_FACE_EPSILON) return 1;
+  if (value < -LIGHT_FACE_EPSILON) return -1;
+  return 0;
+}
+
+function blockKey(x: number, y: number, z: number): string {
+  return `${x},${y},${z}`;
 }
 
 function mergeCellsIntoRectangles(cells: Map<string, { x: number; z: number }>): Array<{

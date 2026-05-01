@@ -23,10 +23,11 @@ import skyboxFSText from "./shaders/skybox.frag";
 import skyboxVSText from "./shaders/skybox.vert";
 import { type ShadowTechnique, shadowTechniqueIndex } from "./shadow-technique";
 import { createDirectionalCubeShadowVolumeGeometry, SHADOW_VOLUME_INDEX_DATA } from "./shadow-volume";
-import { buildShadowVolumeCasterPositions } from "./shadow-volume-casters";
+import { buildShadowVolumeCasterPositions, shadowVolumeCasterDirectionKey } from "./shadow-volume-casters";
 
 const SHADOW_MAP_SIZE = 2048;
 const SHADOW_STENCIL_NEUTRAL = 128;
+const SHADOW_VOLUME_MIN_VISIBLE_LIGHT_Y = 0.08;
 
 export interface RenderView {
   viewMatrix: Mat4;
@@ -95,6 +96,7 @@ export class Renderer {
   private readonly shadowFramebuffer: WebGLFramebuffer;
   private readonly shadowDepthTexture: WebGLTexture;
   private lastShadowVolumeDirectionKey = "";
+  private lastShadowVolumeCasterDirectionKey = "";
   private shadowVolumeCasterPositions: Float32Array<ArrayBufferLike> = new Float32Array(0);
   private shadowVolumeCasterScales: Float32Array<ArrayBufferLike> = new Float32Array(0);
   private shadowVolumeCasterCount = 0;
@@ -157,14 +159,21 @@ export class Renderer {
       this.shadowMapRenderPass.updateAttributeBuffer("aOffset", view.cubePositions);
       this.lastCubePositions = view.cubePositions;
     }
-    if (view.shadowTechnique === "shadow-volume" && view.cubePositions !== this.lastShadowVolumeCubePositions) {
-      const casters = buildShadowVolumeCasterPositions(view.cubePositions);
+    const shouldDrawShadowVolumeMask = this.shouldDrawShadowVolumeMask(view);
+    const casterDirectionKey = shadowVolumeCasterDirectionKey(view.lightDirection);
+    if (
+      shouldDrawShadowVolumeMask &&
+      (view.cubePositions !== this.lastShadowVolumeCubePositions ||
+        casterDirectionKey !== this.lastShadowVolumeCasterDirectionKey)
+    ) {
+      const casters = buildShadowVolumeCasterPositions(view.cubePositions, view.lightDirection);
       this.shadowVolumeCasterPositions = casters.positions;
       this.shadowVolumeCasterScales = casters.scales;
       this.shadowVolumeCasterCount = casters.count;
       this.shadowVolumeRenderPass.updateAttributeBuffer("aOffset", this.shadowVolumeCasterPositions);
       this.shadowVolumeRenderPass.updateAttributeBuffer("aScale", this.shadowVolumeCasterScales);
       this.lastShadowVolumeCubePositions = view.cubePositions;
+      this.lastShadowVolumeCasterDirectionKey = casterDirectionKey;
     }
     if (view.cubeColors !== this.lastCubeColors) {
       this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
@@ -221,7 +230,7 @@ export class Renderer {
       if (!ep.cullFace) gl.enable(gl.CULL_FACE);
     }
 
-    if (view.shadowTechnique === "shadow-volume") {
+    if (shouldDrawShadowVolumeMask) {
       this.drawShadowVolumes();
     }
 
@@ -332,6 +341,14 @@ export class Renderer {
     gl.depthMask(true);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
+  }
+
+  private shouldDrawShadowVolumeMask(view: RenderView): boolean {
+    return (
+      view.shadowTechnique === "shadow-volume" &&
+      view.shadowStrength > 0 &&
+      (view.lightDirection[1] ?? 0) > SHADOW_VOLUME_MIN_VISIBLE_LIGHT_Y
+    );
   }
 
   private drawDebugShadowVolumes(): void {
@@ -486,7 +503,7 @@ export class Renderer {
 
   private updateShadowVolumeGeometry(): void {
     const lightDirection = this.currentView.lightDirection;
-    const key = `${(lightDirection[0] ?? 0).toFixed(3)},${(lightDirection[1] ?? 0).toFixed(3)},${(lightDirection[2] ?? 1).toFixed(3)}`;
+    const key = shadowVolumeCasterDirectionKey(lightDirection);
     if (key === this.lastShadowVolumeDirectionKey) return;
     this.lastShadowVolumeDirectionKey = key;
     const geometry = createDirectionalCubeShadowVolumeGeometry(
