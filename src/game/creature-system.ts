@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { CubeType } from "@/client/engine/render/cube-types";
-import { CHUNK_SIZE, chunkOrigin } from "@/game/chunk";
+import { CHUNK_HEIGHT, CHUNK_SIZE, chunkOrigin } from "@/game/chunk";
 import type { ChunkStorage } from "@/game/chunk-storage";
 import type { CreaturePublicState } from "@/game/creature";
 import { type CreatureState, createCreatureState, deriveStats, getMovesForLevel } from "@/game/creature-progression";
@@ -18,7 +18,13 @@ const PER_PLAYER_RADIUS = CHUNK_SIZE * 2;
 const PER_PLAYER_CAP = 5;
 const DESPAWN_RADIUS = CHUNK_SIZE * 3;
 const RESPAWN_COOLDOWN_MS = 15_000;
-const WANDER_STEP_MAX = 0.22;
+const WANDER_STEP_MAX = 0.14;
+const WILD_MOVE_DELAY_MIN_MS = 7_000;
+const WILD_MOVE_DELAY_SPREAD_MS = 8_000;
+const WILD_PATHFIND_RADIUS = 18;
+const WILD_COMFORT_RADIUS = 5;
+const CREATURE_MAX_STEP_UP = 1.25;
+const CREATURE_MAX_DROP = 2.5;
 const PLAYER_SPAWN_COOLDOWN_MS = 300;
 const PLAYER_LOCAL_SPAWN_ATTEMPTS = 16;
 const LOCAL_SPAWN_MIN_RADIUS = 4;
@@ -60,6 +66,7 @@ export class CreatureSystem implements GameSystem {
   private onlinePlayerIds = new Set<string>();
   private viewByPlayer = new Map<string, Set<string>>();
   private playerSpawnCooldownUntil = new Map<string, number>();
+  private nextWildMoveAt = new Map<string, number>();
   private nextWildSerial = 1;
 
   constructor(chunkStorage: ChunkStorage, playerSystem: PlayerSystem) {
@@ -217,6 +224,7 @@ export class CreatureSystem implements GameSystem {
     if (dx * dx + dz * dz > maxDistance * maxDistance) return undefined;
 
     this.creatures.delete(creatureId);
+    this.nextWildMoveAt.delete(creatureId);
     this.pendingDespawnIds.add(creatureId);
     this.dirtyIds.add(creatureId);
 
@@ -272,11 +280,14 @@ export class CreatureSystem implements GameSystem {
           isWild: true,
           ownerPlayerId: null,
         });
+        const surface = this.resolveCreatureSurface(spawnPoint.x + 0.5, spawnPoint.z + 0.5, spawnPoint.y);
+        if (!surface) continue;
+
         const instance: CreatureInstance = {
           state,
-          x: spawnPoint.x + 0.5,
-          y: spawnPoint.y,
-          z: spawnPoint.z + 0.5,
+          x: surface.x,
+          y: surface.y,
+          z: surface.z,
           yaw: 0,
           chunkKey,
           spawnPointKey: spKey,
@@ -284,6 +295,7 @@ export class CreatureSystem implements GameSystem {
         };
 
         this.creatures.set(id, instance);
+        this.nextWildMoveAt.set(id, nowMs + wildMoveDelayMs(id, nowMs));
         this.dirtyIds.add(id);
         chunkCounts.set(chunkKey, inChunk + 1);
         changed = true;
@@ -340,6 +352,7 @@ export class CreatureSystem implements GameSystem {
         removed: false,
       };
       this.creatures.set(id, instance);
+      this.nextWildMoveAt.set(id, nowMs + wildMoveDelayMs(id, nowMs));
       this.dirtyIds.add(id);
       chunkCounts.set(chunkKey, inChunk + 1);
       changed = true;
@@ -382,14 +395,13 @@ export class CreatureSystem implements GameSystem {
       const surfaceBlock = chunk.getBlock(localX, terrainY, localZ);
       if (surfaceBlock === CubeType.Air || surfaceBlock === CubeType.Water || surfaceBlock === CubeType.Lava) continue;
 
-      const above = chunk.getBlock(localX, terrainY + 1, localZ);
-      if (above !== CubeType.Air) continue;
-
       const candidateX = worldX + 0.5;
       const candidateZ = worldZ + 0.5;
       if (countWildWithinRadius(candidateX, candidateZ, this.creatures, LOCAL_SPAWN_MIN_SEPARATION) > 0) continue;
+      const surface = this.resolveCreatureSurface(candidateX, candidateZ);
+      if (!surface) continue;
 
-      return { x: candidateX, y: terrainY + 0.5, z: candidateZ, yaw: angle + Math.PI };
+      return { x: surface.x, y: surface.y, z: surface.z, yaw: angle + Math.PI };
     }
     return undefined;
   }
@@ -401,24 +413,115 @@ export class CreatureSystem implements GameSystem {
       if (!creature.state.isWild) continue;
       if (creature.state.stats.hp <= 0) continue;
 
-      const n = hashTo01(creature.state.id, now);
-      if (n < 0.82) continue;
+      const currentSurface = this.resolveCreatureSurface(creature.x, creature.z, creature.y);
+      if (currentSurface && Math.abs(currentSurface.y - creature.y) > 0.05) {
+        creature.x = currentSurface.x;
+        creature.y = currentSurface.y;
+        creature.z = currentSurface.z;
+        this.dirtyIds.add(creature.state.id);
+        changed = true;
+      }
 
-      const angle = hashTo01(`${creature.state.id}:angle`, now) * Math.PI * 2;
-      const step = WANDER_STEP_MAX * (0.4 + hashTo01(`${creature.state.id}:step`, now) * 0.6);
-      const dx = Math.cos(angle) * step;
-      const dz = Math.sin(angle) * step;
+      const nextMoveAt = this.nextWildMoveAt.get(creature.state.id);
+      if (nextMoveAt === undefined) {
+        this.nextWildMoveAt.set(creature.state.id, now + wildMoveDelayMs(creature.state.id, now));
+        continue;
+      }
+      if (nextMoveAt > now) continue;
+      this.nextWildMoveAt.set(creature.state.id, now + wildMoveDelayMs(creature.state.id, now));
 
-      const x = creature.x + dx;
-      const z = creature.z + dz;
-      creature.x = x;
-      creature.z = z;
-      creature.yaw = angle;
-      creature.chunkKey = chunkKeyFromPosition(x, z);
+      const planned = this.planWildStep(creature, now);
+      if (!planned) continue;
+
+      creature.x = planned.x;
+      creature.y = planned.y;
+      creature.z = planned.z;
+      creature.yaw = planned.yaw;
+      creature.chunkKey = chunkKeyFromPosition(planned.x, planned.z);
       this.dirtyIds.add(creature.state.id);
       changed = true;
     }
     return changed;
+  }
+
+  private planWildStep(
+    creature: CreatureInstance,
+    nowMs: number,
+  ): { x: number; y: number; z: number; yaw: number } | undefined {
+    const nearestPlayer = this.nearestPlayer(creature.x, creature.z, WILD_PATHFIND_RADIUS);
+    let baseAngle = hashTo01(`${creature.state.id}:angle`, nowMs) * Math.PI * 2;
+
+    if (nearestPlayer) {
+      const dx = nearestPlayer.x - creature.x;
+      const dz = nearestPlayer.z - creature.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > WILD_COMFORT_RADIUS) {
+        baseAngle = Math.atan2(dz, dx);
+      } else if (distance < WILD_COMFORT_RADIUS * 0.55) {
+        baseAngle = Math.atan2(-dz, -dx);
+      }
+    }
+
+    const step = WANDER_STEP_MAX * (0.65 + hashTo01(`${creature.state.id}:step`, nowMs) * 0.55);
+    const offsets = [0, Math.PI / 6, -Math.PI / 6, Math.PI / 3, -Math.PI / 3, Math.PI / 2, -Math.PI / 2];
+    for (const offset of offsets) {
+      const angle = baseAngle + offset;
+      const x = creature.x + Math.cos(angle) * step;
+      const z = creature.z + Math.sin(angle) * step;
+      const surface = this.resolveCreatureSurface(x, z, creature.y);
+      if (!surface) continue;
+      const dy = surface.y - creature.y;
+      if (dy > CREATURE_MAX_STEP_UP || dy < -CREATURE_MAX_DROP) continue;
+      return { ...surface, yaw: angle };
+    }
+    return undefined;
+  }
+
+  private nearestPlayer(x: number, z: number, radius: number): { x: number; z: number } | undefined {
+    const r2 = radius * radius;
+    let nearest: { x: number; z: number; dist2: number } | undefined;
+    for (const playerId of this.onlinePlayerIds) {
+      const pos = this.playerSystem.getPlayerPosition(playerId);
+      if (!pos) continue;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      const dist2 = dx * dx + dz * dz;
+      if (dist2 > r2) continue;
+      if (!nearest || dist2 < nearest.dist2) nearest = { x: pos.x, z: pos.z, dist2 };
+    }
+    return nearest;
+  }
+
+  private resolveCreatureSurface(
+    x: number,
+    z: number,
+    fallbackY?: number,
+  ): { x: number; y: number; z: number } | undefined {
+    if (typeof (this.chunkStorage as { getChunk?: unknown }).getChunk !== "function") {
+      return fallbackY == null ? undefined : { x, y: fallbackY, z };
+    }
+
+    const worldX = Math.floor(x);
+    const worldZ = Math.floor(z);
+    const [originX, originZ] = chunkOrigin(worldX, worldZ);
+    const chunk = this.chunkStorage.getChunk(originX, originZ);
+    if (!chunk) return fallbackY == null ? undefined : { x, y: fallbackY, z };
+
+    const localX = worldX - (originX - CHUNK_SIZE / 2);
+    const localZ = worldZ - (originZ - CHUNK_SIZE / 2);
+    if (localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) return undefined;
+
+    const idx = localZ * CHUNK_SIZE + localX;
+    let surfaceY = chunk.heightMap[idx] ?? 0;
+    while (surfaceY > 0 && !isCreatureFootingBlock(chunk.getBlock(localX, surfaceY, localZ))) {
+      surfaceY--;
+    }
+    if (!isCreatureFootingBlock(chunk.getBlock(localX, surfaceY, localZ))) return undefined;
+    if (surfaceY + 2 >= CHUNK_HEIGHT) return undefined;
+    if (chunk.getBlock(localX, surfaceY + 1, localZ) !== CubeType.Air) return undefined;
+    if (chunk.getBlock(localX, surfaceY + 2, localZ) !== CubeType.Air) return undefined;
+
+    return { x, y: surfaceY + 1, z };
   }
 
   private despawnFarCreatures(): boolean {
@@ -429,6 +532,7 @@ export class CreatureSystem implements GameSystem {
       const nearPlayers = this.countPlayersWithinRadius(creature.x, creature.z, DESPAWN_RADIUS);
       if (nearPlayers > 0) continue;
       this.creatures.delete(id);
+      this.nextWildMoveAt.delete(id);
       this.pendingDespawnIds.add(id);
       this.dirtyIds.add(id);
       this.spawnCooldowns.set(creature.spawnPointKey, { availableAt: Date.now() + RESPAWN_COOLDOWN_MS });
@@ -527,6 +631,10 @@ function pickSpeciesForSpawn(x: number, z: number): CreatureSpeciesId {
   return pool[idx]?.id ?? "spriglyn";
 }
 
+function isCreatureFootingBlock(block: CubeType): boolean {
+  return block !== CubeType.Air && block !== CubeType.Water && block !== CubeType.Lava;
+}
+
 function parseMoves(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw);
@@ -550,4 +658,8 @@ function hashTo01(seed: string, t: number): number {
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0) / 0xffffffff;
+}
+
+function wildMoveDelayMs(id: string, nowMs: number): number {
+  return Math.round(WILD_MOVE_DELAY_MIN_MS + hashTo01(`${id}:move-delay`, nowMs) * WILD_MOVE_DELAY_SPREAD_MS);
 }

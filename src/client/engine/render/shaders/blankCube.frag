@@ -89,11 +89,11 @@ float fluidNoise(vec2 p, float t) {
 float sampleShadowMapVisibility(vec4 lightSpacePos, float dotNL) {
   vec3 projected = lightSpacePos.xyz / max(lightSpacePos.w, 0.0001);
   vec3 coord = projected * 0.5 + 0.5;
-  if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0 || coord.z > 1.0) {
+  if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0 || coord.z < 0.0 || coord.z > 1.0) {
     return 1.0;
   }
 
-  float bias = max(0.00075, 0.0024 * (1.0 - dotNL));
+  float bias = max(0.0025, 0.006 * (1.0 - dotNL));
   float visibility = 0.0;
   for (int y = -1; y <= 1; y++) {
     for (int x = -1; x <= 1; x++) {

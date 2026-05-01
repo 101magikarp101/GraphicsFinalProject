@@ -29,6 +29,22 @@
         font-family: Menlo, Consolas, monospace;
         font-size: 9.5pt;
       }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0.08in 0;
+        font-size: 9.2pt;
+      }
+      th,
+      td {
+        border: 1px solid #d1d5db;
+        padding: 3px 5px;
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
       @media print {
         main {
           padding: 0;
@@ -64,12 +80,12 @@
         <code>direct = mix(1 - strength, 1, visibility)</code>.
       </p>
       <p>
-        Stencil shadow volumes use the z-fail method. The sun/moon is a normalized directional light. For each cube,
-        faces with <code>dot(n, l) &gt; 0</code> form the front cap; the same cap is extruded in direction
+        Stencil shadow volumes use the z-fail method. The sun/moon is a normalized directional light. For each selected
+        caster cube, faces with <code>dot(n, l) &gt; 0</code> form the front cap; the same cap is extruded in direction
         <code>-l</code>; silhouette edges are detected where adjacent face signs differ and extruded into quads. The
         closed volume is rendered into the stencil buffer with color/depth writes disabled. Back faces increment on
-        depth fail, front faces decrement on depth fail, and pixels with nonzero stencil are darkened by a masked
-        overlay.
+        depth fail, front faces decrement on depth fail, and pixels with nonzero stencil are darkened by a full-screen
+        multiply pass that preserves the original block hue.
       </p>
       <p>
         References: NVIDIA GPU Gems 3 Chapter 11, Paul’s Projects OpenGL shadow volume notes, and OpenGL SIGGRAPH 1999
@@ -85,11 +101,47 @@
       </p>
       <p>
         The shadow-volume geometry builder is isolated in
-        <code>src/client/engine/render/shadow-volume.ts</code>. Unit tests verify closure, outward winding, and
-        extrusion direction. Benchmark exports include JSON, CSV, Markdown, and SVG. Static comparison artifacts are in
+        <code>src/client/engine/render/shadow-volume.ts</code>, and the caster filter is isolated in
+        <code>src/client/engine/render/shadow-volume-casters.ts</code>. Unit tests verify closure, outward winding,
+        extrusion direction, and that the optimized caster filter keeps vegetation and silhouette columns while dropping
+        broad flat terrain. Benchmark exports include JSON, CSV, Markdown, and SVG. Static comparison artifacts are in
         <code>docs/final-project/</code>; runtime capture is implemented by
         <code>scripts/capture-shadow-benchmarks.mjs</code>.
       </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Technique</th>
+            <th>Avg CPU ms</th>
+            <th>Avg GPU ms</th>
+            <th>Avg FPS</th>
+            <th>Est. MB</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Ambient occlusion</td>
+            <td>1.65</td>
+            <td>2.24</td>
+            <td>112.0</td>
+            <td>0.0</td>
+          </tr>
+          <tr>
+            <td>Shadow map</td>
+            <td>1.60</td>
+            <td>1.97</td>
+            <td>107.8</td>
+            <td>16.0</td>
+          </tr>
+          <tr>
+            <td>Shadow volume</td>
+            <td>1.93</td>
+            <td>3.13</td>
+            <td>111.4</td>
+            <td>2.1</td>
+          </tr>
+        </tbody>
+      </table>
       <p>
         Known limitations: shadow maps currently use terrain cubes as the main caster/receiver path. Shadow volumes
         cast from visible terrain cubes and darken the rendered scene through a stencil mask, but the far cap is finite

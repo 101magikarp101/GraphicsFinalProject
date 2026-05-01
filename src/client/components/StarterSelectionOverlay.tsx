@@ -50,7 +50,6 @@ export function StarterSelectionOverlay(props: StarterSelectionOverlayProps) {
                 if (event.button === 0) return;
                 event.preventDefault();
                 event.stopPropagation();
-                selectStarter(starter.speciesId);
               }}
             >
               <div class="font-mono text-lg font-black uppercase tracking-[0.06em] text-white">{starter.title}</div>

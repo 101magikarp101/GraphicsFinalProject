@@ -28,9 +28,9 @@ import {
   type InventorySlot,
   MAX_COORDINATE,
   normalizeInventory,
+  PLAYER_FLY_MULTIPLIER,
   PLAYER_MAX_FALL_SPEED,
   PLAYER_SPEED,
-  PLAYER_SPRINT_MULTIPLIER,
   Player,
   type PlayerAttackPacket,
   type PlayerPositionPacket,
@@ -531,8 +531,11 @@ export class PlayerSystem implements GameSystem {
 
   private isPlausibleMovement(prev: PlayerState, packet: PlayerPositionPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
-    const maxHorizontal = PLAYER_SPEED * PLAYER_SPRINT_MULTIPLIER * elapsedSeconds + MOVEMENT_TOLERANCE;
-    const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxFlyDistance = PLAYER_SPEED * PLAYER_FLY_MULTIPLIER * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxHorizontal = maxFlyDistance;
+    const maxVertical =
+      Math.max(PLAYER_MAX_FALL_SPEED * elapsedSeconds, PLAYER_SPEED * PLAYER_FLY_MULTIPLIER * elapsedSeconds) +
+      MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;
@@ -541,8 +544,11 @@ export class PlayerSystem implements GameSystem {
 
   private isPlausibleAttack(prev: PlayerState, packet: PlayerAttackPacket, lastAcceptedAt: number): boolean {
     const elapsedSeconds = Math.max(0, Date.now() - lastAcceptedAt + BASE_MOVEMENT_WINDOW_MS) / 1000;
-    const maxHorizontal = PLAYER_SPEED * PLAYER_SPRINT_MULTIPLIER * elapsedSeconds + MOVEMENT_TOLERANCE;
-    const maxVertical = PLAYER_MAX_FALL_SPEED * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxFlyDistance = PLAYER_SPEED * PLAYER_FLY_MULTIPLIER * elapsedSeconds + MOVEMENT_TOLERANCE;
+    const maxHorizontal = maxFlyDistance;
+    const maxVertical =
+      Math.max(PLAYER_MAX_FALL_SPEED * elapsedSeconds, PLAYER_SPEED * PLAYER_FLY_MULTIPLIER * elapsedSeconds) +
+      MOVEMENT_TOLERANCE;
     const dx = packet.x - prev.x;
     const dy = packet.y - prev.y;
     const dz = packet.z - prev.z;

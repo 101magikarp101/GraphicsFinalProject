@@ -32,7 +32,7 @@ const DEFAULT_PREFERENCES: GameplayPreferences = {
   showDiagnostics: true,
   showMobHighlight: true,
   shadowTechnique: "ambient-occlusion",
-  shadowStrength: 0.62,
+  shadowStrength: 0.72,
 };
 
 export function createGameplayPreferences() {

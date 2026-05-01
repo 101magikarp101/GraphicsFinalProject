@@ -11,6 +11,7 @@ export interface WalkKeys {
   d: boolean;
   space: boolean;
   shift: boolean;
+  fly: boolean;
 }
 
 export interface InputOptions {
@@ -49,6 +50,8 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   if (opts.onToggleHud) createShortcut(["F1"], opts.onToggleHud);
   if (opts.onToggleDebug) createShortcut(["F3"], opts.onToggleDebug);
   if (opts.onToggleMobHighlight) createShortcut(["H"], opts.onToggleMobHighlight);
+  const [fly, setFly] = createSignal(false);
+  createShortcut(["F"], () => setFly((enabled) => !enabled));
   if (opts.onSelectHotbarSlot) {
     const onSelect = opts.onSelectHotbarSlot;
     for (let i = 0; i < HOTBAR_SLOT_COUNT; i++) {
@@ -87,6 +90,7 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
     createEventListener(el, "click", () => {
       if (document.pointerLockElement === el) return;
       void requestPointerLock(el);
+      opts.onLeftClick?.();
     });
   });
 
@@ -117,7 +121,11 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   createEventListener(document, "mousedown", (e) => {
     if (document.pointerLockElement !== canvas()) return;
     e.preventDefault();
-    opts.onLeftClick?.();
+    if (e.button === 0) {
+      opts.onLeftClick?.();
+    } else if (e.button === 2) {
+      opts.onRightClick?.();
+    }
   });
   if (opts.onCycleHotbar) {
     const onCycle = opts.onCycleHotbar;
@@ -130,7 +138,7 @@ export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opt
   }
   return {
     walkKeys() {
-      return { w: w(), a: a(), s: s(), d: d(), space: space(), shift: shift() };
+      return { w: w(), a: a(), s: s(), d: d(), space: space(), shift: shift(), fly: fly() };
     },
     consumeMouseDelta() {
       const dx = hasRawMouseDelta ? pendingRawDx : pendingMouseDx;

@@ -36,6 +36,7 @@ export function joinWorld(roomId: string) {
   const [tickInfo, setTickInfo] = createStore<TickInfo>({ tick: 0, tickTimeMs: 0, timeOfDayS: 0 });
   const [inventoryUi, setInventoryUi] = createStore(createInventoryUiState());
   const [starterState, setStarterState] = createSignal<StarterCreatureState | null>(null);
+  const [starterStateReceived, setStarterStateReceived] = createSignal(false);
   const [battleState, setBattleState] = createSignal<BattleSessionState | null>(null);
   const sounds = createSoundEffects();
 
@@ -119,6 +120,7 @@ export function joinWorld(roomId: string) {
         return;
       }
       case "starterState":
+        setStarterStateReceived(true);
         setStarterState(packet.starter);
         return;
       case "battleState":
@@ -148,6 +150,7 @@ export function joinWorld(roomId: string) {
     remoteCreatures,
     tickInfo,
     starterState,
+    starterStateReceived,
     battleState,
     snapCount,
     session,

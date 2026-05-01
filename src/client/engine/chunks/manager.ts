@@ -1,5 +1,5 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: typed-array hot path with bounded indices */
-import { Mat4, type Mat4Like } from "gl-matrix";
+import type { Mat4Like } from "gl-matrix";
 import { CubeType } from "@/client/engine/render/cube-types";
 import {
   CHUNK_HEIGHT,
@@ -16,13 +16,12 @@ import type { PlacedObject, PlacedObjectType } from "@/game/object-placement";
 import { emptyPlacedObjectCounts } from "@/game/object-placement";
 import { Player } from "@/game/player";
 import type { ChunkBatchData, SingleChunkData } from "./client";
-import { aabbInFrustum, chunkAABB, extractFrustumPlanes } from "./frustum";
 
-export const DEFAULT_RENDER_DISTANCE = 4;
+export const DEFAULT_RENDER_DISTANCE = 1;
 export const MIN_RENDER_DISTANCE = 1;
-export const MAX_RENDER_DISTANCE = 4;
+export const MAX_RENDER_DISTANCE = 5;
 const EVICT_PADDING = 2;
-const INGEST_PER_FRAME = 3;
+const INGEST_PER_FRAME = 1;
 
 export interface ChunkClient {
   loadChunks(chunks: Array<{ originX: number; originZ: number; blocks: Uint8Array }>): Promise<ChunkBatchData>;
@@ -33,8 +32,8 @@ export interface ChunkClient {
 
 /**
  * Main-thread coordinator that receives server-pushed chunk data, dispatches
- * to the mesh-building worker, and feeds frustum-culled render arrays to the
- * renderer each frame.
+ * to the mesh-building worker, and feeds distance-culled render arrays to the
+ * renderer.
  */
 export class ChunkManager {
   private readonly client: ChunkClient;
@@ -57,6 +56,7 @@ export class ChunkManager {
   >();
   private workerBusy = false;
   private resetGeneration = 0;
+  private placedObjectsDirty = false;
   private positionBuffer = new Float32Array(0);
   private colorBuffer = new Float32Array(0);
   private ambientOcclusionBuffer = new Uint8Array(0);
@@ -136,6 +136,7 @@ export class ChunkManager {
     this.localOverrides.clear();
     this.ingestQueue.length = 0;
     this.pendingPlacedObjects.clear();
+    this.placedObjectsDirty = true;
     this.resetGeneration++;
     void this.client.clearCache();
     this.dirty = true;
@@ -427,11 +428,8 @@ export class ChunkManager {
     this.rebuildSections(adjChunk, adjOriginX, adjOriginZ, new Set([sectionIndex(nlx, wy, nlz)]), worldGet);
   }
 
-  /** Frustum-cull chunks and concatenate visible ones into flat arrays. */
-  cull(viewMatrix: Readonly<Mat4Like>, projMatrix: Readonly<Mat4Like>): void {
-    const vp = Mat4.multiply(new Mat4(), projMatrix, viewMatrix) as Mat4;
-    const planes = extractFrustumPlanes(vp);
-
+  /** Distance-cull chunks and concatenate visible ones into flat arrays. */
+  cull(_viewMatrix: Readonly<Mat4Like>, _projMatrix: Readonly<Mat4Like>): void {
     let totalCubes = 0;
     const visible: SingleChunkData[] = [];
 
@@ -441,11 +439,8 @@ export class ChunkManager {
       const dz = Math.abs(chunk.originZ - this.lastOriginZ) / CHUNK_SIZE;
       if (Math.max(dx, dz) > this.renderDistance) continue;
 
-      const aabb = chunkAABB(chunk.originX, chunk.originZ);
-      if (aabbInFrustum(aabb, planes)) {
-        visible.push(chunk);
-        totalCubes += chunk.numCubes;
-      }
+      visible.push(chunk);
+      totalCubes += chunk.numCubes;
     }
 
     if (
@@ -488,10 +483,12 @@ export class ChunkManager {
   }
 
   private mergeBatch(batch: ChunkBatchData): void {
+    let placedObjectsDirty = false;
     for (const workerChunk of batch.chunks) {
       const key = chunkKey(workerChunk.originX, workerChunk.originZ);
       const pending = this.pendingPlacedObjects.get(key);
       const existing = this.chunkDataMap.get(key);
+      if (pending || !existing) placedObjectsDirty = true;
       const chunk: SingleChunkData = {
         ...workerChunk,
         placedObjects: pending?.objects ?? existing?.placedObjects ?? [],
@@ -502,14 +499,7 @@ export class ChunkManager {
       this.reapplyOverrides(chunk, key);
     }
 
-    const placedObjects: PlacedObject[] = [];
-    for (const chunk of this.chunkDataMap.values()) {
-      for (const object of chunk.placedObjects) {
-        placedObjects.push(object);
-      }
-    }
-
-    this.placedObjects = placedObjects;
+    if (placedObjectsDirty || this.placedObjectsDirty) this.rebuildPlacedObjects();
     this.dirty = true;
     this.onChange?.();
   }
@@ -574,7 +564,10 @@ export class ChunkManager {
       this.chunkDataMap.delete(key);
       this.localOverrides.delete(key);
     }
-    if (toDelete.length > 0) this.dirty = true;
+    if (toDelete.length > 0) {
+      this.rebuildPlacedObjects();
+      this.dirty = true;
+    }
   }
 
   dispose(): void {
@@ -583,6 +576,17 @@ export class ChunkManager {
 
   getVisiblePlacedObjects(): readonly PlacedObject[] {
     return this.placedObjects;
+  }
+
+  private rebuildPlacedObjects(): void {
+    const placedObjects: PlacedObject[] = [];
+    for (const chunk of this.chunkDataMap.values()) {
+      for (const object of chunk.placedObjects) {
+        placedObjects.push(object);
+      }
+    }
+    this.placedObjects = placedObjects;
+    this.placedObjectsDirty = false;
   }
 
   sampleSurface(wx: number, wz: number): number | undefined {

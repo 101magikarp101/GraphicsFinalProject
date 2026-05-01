@@ -24,13 +24,15 @@ export function BattleHud(props: BattleHudProps) {
     setRevealStartedAtMs(Date.now());
   });
 
-  const starterHpPct = Math.round((props.battle.starter.hp / Math.max(1, props.battle.starter.maxHp)) * 100);
-  const wildHpPct = Math.round((props.battle.wild.hp / Math.max(1, props.battle.wild.maxHp)) * 100);
-  const xpStart = props.battle.starter.level ** 3;
-  const xpEnd = props.battle.starter.nextLevelExperience ?? Math.max(xpStart + 1, props.battle.starter.experience ?? 0);
-  const xpPct = Math.round(
-    (((props.battle.starter.experience ?? xpStart) - xpStart) / Math.max(1, xpEnd - xpStart)) * 100,
-  );
+  const displayedStarterHp = () => displayedHpFor("starter");
+  const displayedWildHp = () => displayedHpFor("wild");
+  const starterHpPct = () => Math.round((displayedStarterHp() / Math.max(1, props.battle.starter.maxHp)) * 100);
+  const wildHpPct = () => Math.round((displayedWildHp() / Math.max(1, props.battle.wild.maxHp)) * 100);
+  const xpStart = () => props.battle.starter.level ** 3;
+  const xpEnd = () =>
+    props.battle.starter.nextLevelExperience ?? Math.max(xpStart() + 1, props.battle.starter.experience ?? 0);
+  const xpPct = () =>
+    Math.round((((props.battle.starter.experience ?? xpStart()) - xpStart()) / Math.max(1, xpEnd() - xpStart())) * 100);
   const selectMove = (moveId: string) => {
     if (!props.battle.canSelectMove) return;
     props.onSelectMove(moveId);
@@ -46,6 +48,22 @@ export function BattleHud(props: BattleHudProps) {
     );
     return log.slice(0, visibleCount);
   };
+  const displayedHpFor = (actor: "starter" | "wild") => {
+    const battle = props.battle;
+    const base = actor === "starter" ? battle.starter.hp : battle.wild.hp;
+    const max = actor === "starter" ? battle.starter.maxHp : battle.wild.maxHp;
+    const animation = battle.lastTurnAnimation;
+    if (battle.phase !== "resolving" || !animation) return base;
+
+    let pendingDamage = 0;
+    for (const action of animation.actions) {
+      const target = action.actor === "starter" ? "wild" : "starter";
+      if (target === actor && action.hit && action.damage > 0 && nowMs() < action.impactAtMs) {
+        pendingDamage += action.damage;
+      }
+    }
+    return Math.max(0, Math.min(max, base + pendingDamage));
+  };
 
   return (
     <div class="absolute inset-x-0 bottom-0 z-30 p-3 md:p-4">
@@ -55,17 +73,17 @@ export function BattleHud(props: BattleHudProps) {
             <div class="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#9ab0ff]">Your Starter</div>
             <div class="mt-1 font-mono text-xl font-black uppercase text-white">{props.battle.starter.speciesId}</div>
             <div class="mt-2 h-2.5 w-full bg-[#0d1220]">
-              <div class="h-full bg-[#67d36d]" style={{ width: `${starterHpPct}%` }} />
+              <div class="h-full bg-[#67d36d]" style={{ width: `${starterHpPct()}%` }} />
             </div>
             <div class="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-[#d7def9]">
-              HP {props.battle.starter.hp}/{props.battle.starter.maxHp} · Lv {props.battle.starter.level} ·{" "}
+              HP {displayedStarterHp()}/{props.battle.starter.maxHp} · Lv {props.battle.starter.level} ·{" "}
               {props.battle.starter.status}
             </div>
             <div class="mt-2 h-1.5 w-full bg-[#0d1220]">
-              <div class="h-full bg-[#8ca7ff]" style={{ width: `${Math.max(0, Math.min(100, xpPct))}%` }} />
+              <div class="h-full bg-[#8ca7ff]" style={{ width: `${Math.max(0, Math.min(100, xpPct()))}%` }} />
             </div>
             <div class="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[#aebbf1]">
-              XP {props.battle.starter.experience ?? 0}/{xpEnd}
+              XP {props.battle.starter.experience ?? 0}/{xpEnd()}
             </div>
           </div>
 
@@ -73,10 +91,10 @@ export function BattleHud(props: BattleHudProps) {
             <div class="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#ff9a9a]">Wild Opponent</div>
             <div class="mt-1 font-mono text-xl font-black uppercase text-white">{props.battle.wild.speciesId}</div>
             <div class="mt-2 h-2.5 w-full bg-[#1b0f11]">
-              <div class="h-full bg-[#ff6767]" style={{ width: `${wildHpPct}%` }} />
+              <div class="h-full bg-[#ff6767]" style={{ width: `${wildHpPct()}%` }} />
             </div>
             <div class="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-[#f6d6d6]">
-              HP {props.battle.wild.hp}/{props.battle.wild.maxHp} · Lv {props.battle.wild.level} ·{" "}
+              HP {displayedWildHp()}/{props.battle.wild.maxHp} · Lv {props.battle.wild.level} ·{" "}
               {props.battle.wild.status}
             </div>
           </div>
@@ -100,7 +118,6 @@ export function BattleHud(props: BattleHudProps) {
                   if (event.button === 0) return;
                   event.preventDefault();
                   event.stopPropagation();
-                  selectMove(moveId);
                 }}
               >
                 <div class="font-mono text-[11px] font-black uppercase tracking-[0.08em] text-white">

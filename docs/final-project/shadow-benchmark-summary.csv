@@ -1,0 +1,4 @@
+scene,technique,strength,avg_cpu_ms,p95_cpu_ms,avg_gpu_ms,p95_gpu_ms,avg_fps,p95_mspt,est_memory_mb
+open,ambient-occlusion,0.72,1.647,13.000,2.243,4.240,112.004,1.000,0.00
+open,shadow-map,0.72,1.598,13.300,1.967,2.924,107.810,1.000,16.00
+open,shadow-volume,0.72,1.930,13.200,3.127,4.379,111.419,1.000,2.10

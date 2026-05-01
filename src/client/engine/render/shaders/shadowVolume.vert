@@ -3,10 +3,14 @@ precision highp float;
 
 uniform mat4 uView;
 uniform mat4 uProj;
+uniform vec3 uLightDir;
 
 in vec4 aVertPos;
 in vec4 aOffset;
+in vec4 aScale;
 
 void main() {
-  gl_Position = uProj * uView * vec4(aVertPos.xyz + aOffset.xyz, 1.0);
+  vec3 lightBias = -normalize(uLightDir) * 0.015;
+  vec3 world = aVertPos.xyz * aScale.xyz + aOffset.xyz - normalize(uLightDir) * aVertPos.w + lightBias;
+  gl_Position = uProj * uView * vec4(world, 1.0);
 }

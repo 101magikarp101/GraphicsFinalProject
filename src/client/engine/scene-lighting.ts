@@ -16,7 +16,9 @@ export class SceneLighting {
 
   update(timeOfDayS: number): void {
     const t = timeOfDayS % DAY_LENGTH_S;
-    const angle = (t / DAY_LENGTH_S) * Math.PI * 2;
+    // UI time maps 00:00 to midnight, 06:00 to sunrise, 12:00 to noon,
+    // and 18:00 to sunset.
+    const angle = (t / DAY_LENGTH_S) * Math.PI * 2 - Math.PI / 2;
     const sinA = Math.sin(angle);
     const cosA = Math.cos(angle);
 
@@ -30,9 +32,10 @@ export class SceneLighting {
     // moon at its negation). Terrain/player lighting uses `lightPosition`
     // which flips to the moon direction at night so light doesn't come from
     // below the horizon.
+    const horizontalZ = Math.abs(cosA) * 600;
     this.sunPosition[0] = cosA * 2000;
     this.sunPosition[1] = sinA * 2000;
-    this.sunPosition[2] = 600;
+    this.sunPosition[2] = horizontalZ;
     this.sunPosition[3] = 1;
 
     // Light source tracks the sun during the day and the moon (directly
@@ -43,7 +46,7 @@ export class SceneLighting {
     const dirSign = 1 - 2 * night;
     this.lightPosition[0] = cosA * 2000 * dirSign;
     this.lightPosition[1] = sinA * 2000 * dirSign;
-    this.lightPosition[2] = 600;
+    this.lightPosition[2] = horizontalZ;
     this.lightPosition[3] = 1;
     const lightLength = Math.hypot(this.lightPosition[0], this.lightPosition[1], this.lightPosition[2]) || 1;
     this.lightDirection[0] = this.lightPosition[0] / lightLength;

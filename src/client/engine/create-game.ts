@@ -68,6 +68,8 @@ export interface CreateGameArgs {
   };
   /** Whether first-person movement/look input should currently be active. */
   inputEnabled?: () => boolean;
+  /** Whether debug-only world-space render aids should be drawn. */
+  debugVisuals?: () => boolean;
   benchmark?: BenchmarkConfig;
   shortcuts?: Omit<InputOptions, "onReset">;
 }
@@ -662,8 +664,9 @@ export function createGame(args: CreateGameArgs): GameState {
     camera.rotate(mouse.dx * mouseSensitivity, mouse.dy * mouseSensitivity * invertY);
     const keys = input.walkKeys();
     const walk = effectiveInputEnabled ? camera.walkDir(keys) : { x: 0, z: 0 };
+    const fly = effectiveInputEnabled && keys.fly;
     const jump = effectiveInputEnabled && keys.space;
-    const sprint = effectiveInputEnabled && keys.shift;
+    const sprint = effectiveInputEnabled && keys.shift && !fly;
 
     if (benchmarkConfig && benchmarkActive) {
       const elapsedS = (now - benchmarkStartedAtMs) / 1000;
@@ -680,7 +683,18 @@ export function createGame(args: CreateGameArgs): GameState {
     const yaw = camera.yaw();
     const pitch = camera.pitch();
     if (inputEnabled() && chunks.hasChunkAt(player.state.x, player.state.z)) {
-      const next: PlayerInput = { dx: walk.x, dz: walk.z, dtSeconds: inputDt, yaw, pitch, jump, sprint };
+      const next: PlayerInput = {
+        dx: walk.x,
+        dz: walk.z,
+        dtSeconds: inputDt,
+        yaw,
+        pitch,
+        jump,
+        sprint,
+        fly,
+        flyUp: fly && keys.space,
+        flyDown: fly && keys.shift,
+      };
       room().replicated()?.predict(next);
     }
     camera.setPosition(player.position);
@@ -718,8 +732,8 @@ export function createGame(args: CreateGameArgs): GameState {
     const placedObjects = chunks.getVisiblePlacedObjects();
     const movedForObjectRepack =
       Number.isNaN(lastRenderCenterX) ||
-      Math.abs(player.position.x - lastRenderCenterX) >= 4 ||
-      Math.abs(player.position.z - lastRenderCenterZ) >= 4;
+      Math.abs(player.position.x - lastRenderCenterX) >= 8 ||
+      Math.abs(player.position.z - lastRenderCenterZ) >= 8;
     if (placedObjects !== lastPlacedObjects || movedForObjectRepack) {
       const renderablePlacedObjects = filterRenderablePlacedObjects(
         placedObjects,
@@ -814,13 +828,16 @@ export function createGame(args: CreateGameArgs): GameState {
       sunColor: lighting.sunColor,
       shadowTechnique,
       shadowStrength,
+      debugShadowVolumes: args.debugVisuals?.() ?? false,
       timeS: now / 1000,
       cameraPos: eye,
       fogColor,
       fogNear,
       fogFar,
       entities,
-      highlightBlock: currentHit ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ } : undefined,
+      highlightBlock: currentHit
+        ? { x: currentHit.blockX, y: currentHit.blockY, z: currentHit.blockZ, blockType: currentHit.blockType }
+        : undefined,
     });
 
     // --- Diagnostics (producers → store) ---

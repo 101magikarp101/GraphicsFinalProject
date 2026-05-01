@@ -3,6 +3,7 @@ import {
   createEmptyInventory,
   createPlayerState,
   getHeldItemDamage,
+  PLAYER_FLY_MULTIPLIER,
   PLAYER_MAX_HEALTH,
   PLAYER_SPEED,
   PLAYER_SPRINT_MULTIPLIER,
@@ -71,6 +72,21 @@ describe("Player", () => {
     const player = P();
     player.step({ ...I(1, 0), sprint: true });
     expect(player.state.x).toBeCloseTo(PLAYER_SPEED * PLAYER_SPRINT_MULTIPLIER);
+  });
+
+  it("flies at twice sprint speed and supports vertical controls", () => {
+    const player = P();
+    const flySpeed = PLAYER_SPEED * PLAYER_FLY_MULTIPLIER;
+
+    player.step({ ...I(1, 0), fly: true });
+    expect(player.state.x).toBeCloseTo(flySpeed);
+    expect(player.state.y).toBeCloseTo(0);
+
+    player.step({ ...I(0, 0), fly: true, flyUp: true });
+    expect(player.state.y).toBeCloseTo(flySpeed);
+
+    player.step({ ...I(0, 0), fly: true, flyDown: true });
+    expect(player.state.y).toBeCloseTo(0);
   });
 
   it("does not move on zero-length input", () => {

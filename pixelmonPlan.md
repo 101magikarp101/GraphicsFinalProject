@@ -44,8 +44,8 @@ Phases 0-6 are implemented for the final demo path:
 3. Wild spawning, caps, lifecycle state, and replication are implemented.
 4. Blocky creature rendering and battle effect rendering are implemented.
 5. Starter selection, encounter initiation, turn-based battle, move visuals, battle HUD, XP rewards, and persistence are implemented.
-6. Runtime-switchable ambient occlusion, shadow mapping, and stencil shadow volumes are implemented with shadow-strength controls.
-7. Report artifacts, static comparison metrics, and a runtime benchmark capture script are in `docs/final-project/` and `scripts/capture-shadow-benchmarks.mjs`.
+6. Runtime-switchable ambient occlusion, shadow mapping, and optimized stencil shadow volumes are implemented with shadow-strength controls.
+7. Report artifacts, static comparison metrics, real open-scene benchmark logs, and a runtime benchmark capture script are in `docs/final-project/` and `scripts/capture-shadow-benchmarks.mjs`.
 
 Remaining polish after submission would be expansion to all 18 types, deeper balance tuning, and broader screenshot/video capture.
 

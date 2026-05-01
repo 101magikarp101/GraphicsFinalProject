@@ -21,6 +21,7 @@ export function InventorySlotButton(props: {
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (event.button !== 0) return;
         props.onClick?.();
       }}
       tabIndex={-1}

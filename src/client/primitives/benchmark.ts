@@ -54,7 +54,7 @@ const DEFAULT_BENCHMARK_CONFIG: BenchmarkConfig = {
   includeGpuTime: true,
   includeServerTime: true,
   shadowTechnique: "ambient-occlusion",
-  shadowStrength: 0.62,
+  shadowStrength: 0.72,
 };
 
 const SCENE_SET = new Set<BenchmarkScene>(["open", "foliage", "cave", "mixed"]);

@@ -42,7 +42,7 @@ export default function GameView() {
     typeof window !== "undefined" ? parseBenchmarkConfig(window.location.search) : parseBenchmarkConfig("");
 
   const battleActive = () => Boolean(room.battleState()?.active);
-  const needsStarterChoice = () => !room.starterState();
+  const needsStarterChoice = () => room.starterStateReceived() && !room.starterState();
   const anyOverlayOpen = () => ui.pauseMenuOpen() || ui.settingsOpen() || ui.deathScreenOpen();
   const interactionBlocked = () => inventoryOpen() || anyOverlayOpen() || battleActive() || needsStarterChoice();
 
@@ -59,6 +59,7 @@ export default function GameView() {
       shadowStrength: () => preferences.shadowStrength,
     },
     inputEnabled: () => !interactionBlocked(),
+    debugVisuals: debugVisible,
     shortcuts: {
       onToggleInventory: toggleInventory,
       onCloseInventory: closeInventory,

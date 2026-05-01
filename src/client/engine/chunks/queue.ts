@@ -153,6 +153,44 @@ function buildChunkData(ox: number, oz: number, cached: CachedChunkData, result:
   };
 }
 
+function rebuildBoundarySections(
+  cached: CachedChunkData,
+  originX: number,
+  originZ: number,
+  dxFromIncoming: number,
+  dzFromIncoming: number,
+  worldGetBlock: (wx: number, wy: number, wz: number) => CubeType,
+): void {
+  const edgeX = dxFromIncoming > 0 ? 0 : dxFromIncoming < 0 ? CHUNK_SIZE - 1 : -1;
+  const edgeZ = dzFromIncoming > 0 ? 0 : dzFromIncoming < 0 ? CHUNK_SIZE - 1 : -1;
+  const dirty = new Set<number>();
+
+  for (let y = 0; y < CHUNK_HEIGHT; y += SECTION_SIZE) {
+    if (edgeX >= 0) {
+      for (let z = 0; z < CHUNK_SIZE; z += SECTION_SIZE) {
+        dirty.add(sectionIndex(edgeX, y, z));
+      }
+    }
+    if (edgeZ >= 0) {
+      for (let x = 0; x < CHUNK_SIZE; x += SECTION_SIZE) {
+        dirty.add(sectionIndex(x, y, edgeZ));
+      }
+    }
+  }
+
+  for (const idx of dirty) {
+    cached.sections[idx] = renderBlockData(
+      cached.blocks,
+      cached.heightMap,
+      originX,
+      originZ,
+      CHUNK_SIZE,
+      worldGetBlock,
+      sectionRegion(idx),
+    );
+  }
+}
+
 /** Receives server block data, decodes it, caches blocks, and builds render meshes. */
 export class ChunkMeshBuilder {
   private readonly cache: LRUCache<string, CachedChunkData>;
@@ -171,18 +209,23 @@ export class ChunkMeshBuilder {
 
     const worldGetBlock = this.buildWorldGetBlock();
 
-    // Render all sections of incoming chunks + cardinal neighbor chunks
-    const toRender = new Set<string>();
+    // Render incoming chunks fully. Existing neighbors only need their boundary
+    // sections refreshed for edge face culling and AO against the new chunk.
+    const incomingKeys = new Set(incoming.map(({ originX, originZ }) => chunkKey(originX, originZ)));
+    const neighborRefreshes = new Map<string, Array<{ dx: number; dz: number }>>();
     for (const { originX, originZ } of incoming) {
-      toRender.add(chunkKey(originX, originZ));
       for (const [dx, dz] of CARDINAL_OFFSETS) {
         const nkey = chunkKey(originX + dx, originZ + dz);
-        if (this.cache.has(nkey)) toRender.add(nkey);
+        if (!this.cache.has(nkey)) continue;
+        if (incomingKeys.has(nkey)) continue;
+        const refreshes = neighborRefreshes.get(nkey) ?? [];
+        refreshes.push({ dx, dz });
+        neighborRefreshes.set(nkey, refreshes);
       }
     }
 
     const chunks: WorkerChunkData[] = [];
-    for (const key of toRender) {
+    for (const key of incomingKeys) {
       const [oxStr, ozStr] = key.split(",");
       const ox = Number(oxStr);
       const oz = Number(ozStr);
@@ -207,6 +250,18 @@ export class ChunkMeshBuilder {
             : null;
       }
       chunks.push(buildChunkData(ox, oz, cached, sectioned));
+    }
+    for (const [key, refreshes] of neighborRefreshes) {
+      const [oxStr, ozStr] = key.split(",");
+      const ox = Number(oxStr);
+      const oz = Number(ozStr);
+      const cached = this.cache.get(key);
+      if (!cached) continue;
+
+      for (const { dx, dz } of refreshes) {
+        rebuildBoundarySections(cached, ox, oz, dx, dz, worldGetBlock);
+      }
+      chunks.push(buildChunkData(ox, oz, cached, concatenateSections(cached.sections)));
     }
 
     return { chunks };

@@ -1,6 +1,6 @@
 import { Vec3 } from "gl-matrix";
 
-export const SHADOW_VOLUME_EXTRUSION_DISTANCE = 220;
+export const SHADOW_VOLUME_EXTRUSION_DISTANCE = 520;
 export const SHADOW_VOLUME_MAX_TRIANGLES = 32;
 export const SHADOW_VOLUME_MAX_VERTEX_COUNT = SHADOW_VOLUME_MAX_TRIANGLES * 3;
 export const SHADOW_VOLUME_INDEX_DATA = new Uint32Array(
@@ -8,6 +8,14 @@ export const SHADOW_VOLUME_INDEX_DATA = new Uint32Array(
 );
 
 type Vec = readonly [number, number, number];
+interface VolumePoint {
+  /** Position used for CPU-side orientation checks. */
+  pos: Vec;
+  /** Original unextruded cube corner encoded for the vertex shader. */
+  base: Vec;
+  /** Distance to extrude along -lightDirection in the vertex shader. */
+  extrusion: number;
+}
 
 interface Face {
   normal: Vec;
@@ -31,6 +39,7 @@ const CUBE_VERTICES: readonly Vec[] = [
 ];
 
 const ORIGIN: Vec = [0, 0, 0];
+const ORIGIN_POINT: VolumePoint = { pos: ORIGIN, base: ORIGIN, extrusion: 0 };
 
 const CUBE_FACES: readonly Face[] = [
   { normal: [1, 0, 0], vertices: [1, 5, 6, 2] },
@@ -65,7 +74,14 @@ export function createDirectionalCubeShadowVolumeGeometry(
     lightDirection.set([0, 1, 0]);
   }
 
-  const extruded = CUBE_VERTICES.map((vertex) => extrude(vertex, lightDirection, extrusionDistance));
+  const basePoints = CUBE_VERTICES.map((vertex): VolumePoint => ({ pos: vertex, base: vertex, extrusion: 0 }));
+  const extrudedPoints = CUBE_VERTICES.map(
+    (vertex): VolumePoint => ({
+      pos: extrude(vertex, lightDirection, extrusionDistance),
+      base: vertex,
+      extrusion: extrusionDistance,
+    }),
+  );
   const volumeCenter = new Vec3([
     0.5 - lightDirection.x * extrusionDistance * 0.5,
     0.5 - lightDirection.y * extrusionDistance * 0.5,
@@ -83,19 +99,19 @@ export function createDirectionalCubeShadowVolumeGeometry(
     cursor = emitQuadOriented(
       positions,
       cursor,
-      CUBE_VERTICES[a] ?? ORIGIN,
-      CUBE_VERTICES[b] ?? ORIGIN,
-      CUBE_VERTICES[c] ?? ORIGIN,
-      CUBE_VERTICES[d] ?? ORIGIN,
+      basePoints[a] ?? ORIGIN_POINT,
+      basePoints[b] ?? ORIGIN_POINT,
+      basePoints[c] ?? ORIGIN_POINT,
+      basePoints[d] ?? ORIGIN_POINT,
       volumeCenter,
     );
     cursor = emitQuadOriented(
       positions,
       cursor,
-      extruded[a] ?? ORIGIN,
-      extruded[d] ?? ORIGIN,
-      extruded[c] ?? ORIGIN,
-      extruded[b] ?? ORIGIN,
+      extrudedPoints[a] ?? ORIGIN_POINT,
+      extrudedPoints[d] ?? ORIGIN_POINT,
+      extrudedPoints[c] ?? ORIGIN_POINT,
+      extrudedPoints[b] ?? ORIGIN_POINT,
       volumeCenter,
     );
   }
@@ -107,10 +123,10 @@ export function createDirectionalCubeShadowVolumeGeometry(
     cursor = emitQuadOriented(
       positions,
       cursor,
-      CUBE_VERTICES[a] ?? ORIGIN,
-      CUBE_VERTICES[b] ?? ORIGIN,
-      extruded[b] ?? ORIGIN,
-      extruded[a] ?? ORIGIN,
+      basePoints[a] ?? ORIGIN_POINT,
+      basePoints[b] ?? ORIGIN_POINT,
+      extrudedPoints[b] ?? ORIGIN_POINT,
+      extrudedPoints[a] ?? ORIGIN_POINT,
       volumeCenter,
     );
   }
@@ -129,13 +145,13 @@ function extrude(vertex: Vec, lightDirection: Readonly<Vec3>, distance: number):
 function emitQuadOriented(
   out: Float32Array,
   cursor: number,
-  a: Vec,
-  b: Vec,
-  c: Vec,
-  d: Vec,
+  a: VolumePoint,
+  b: VolumePoint,
+  c: VolumePoint,
+  d: VolumePoint,
   volumeCenter: Readonly<Vec3>,
 ): number {
-  if (isOutward(a, b, c, volumeCenter)) {
+  if (isOutward(a.pos, b.pos, c.pos, volumeCenter)) {
     cursor = emitTriangle(out, cursor, a, b, c);
     return emitTriangle(out, cursor, a, c, d);
   }
@@ -143,19 +159,19 @@ function emitQuadOriented(
   return emitTriangle(out, cursor, a, c, b);
 }
 
-function emitTriangle(out: Float32Array, cursor: number, a: Vec, b: Vec, c: Vec): number {
+function emitTriangle(out: Float32Array, cursor: number, a: VolumePoint, b: VolumePoint, c: VolumePoint): number {
   writeVertex(out, cursor++, a);
   writeVertex(out, cursor++, b);
   writeVertex(out, cursor++, c);
   return cursor;
 }
 
-function writeVertex(out: Float32Array, vertexIndex: number, vertex: Vec): void {
+function writeVertex(out: Float32Array, vertexIndex: number, vertex: VolumePoint): void {
   const offset = vertexIndex * 4;
-  out[offset] = vertex[0];
-  out[offset + 1] = vertex[1];
-  out[offset + 2] = vertex[2];
-  out[offset + 3] = 1;
+  out[offset] = vertex.base[0];
+  out[offset + 1] = vertex.base[1];
+  out[offset + 2] = vertex.base[2];
+  out[offset + 3] = vertex.extrusion;
 }
 
 function isOutward(a: Vec, b: Vec, c: Vec, volumeCenter: Readonly<Vec3>): boolean {

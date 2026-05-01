@@ -16,7 +16,7 @@ describe("parseBenchmarkConfig", () => {
     expect(cfg.durationS).toBe(20);
     expect(cfg.warmupS).toBe(3);
     expect(cfg.shadowTechnique).toBe("ambient-occlusion");
-    expect(cfg.shadowStrength).toBe(0.62);
+    expect(cfg.shadowStrength).toBe(0.72);
   });
 
   it("parses and clamps benchmark query parameters", () => {
