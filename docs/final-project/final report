@@ -1,0 +1,79 @@
+SECTION 1: Project Goals and Algorithm Descriptions
+This project extends the previous group Alpha Minecraft project into a playable Pixelmon-inspired graphics demo that showcases three distinct real-time shadow rasterization techniques: ambient occlusion, shadow maps, and shadow volumes. The dual goal is to produce a compelling interactive scene (creatures, world, and battles) while using that scene as a controlled benchmark environment for comparing shadow algorithm accuracy and efficiency.
+The gameplay layer adds original blocky creatures inspired by elemental type systems (Fire, Water, Grass) with 15 original species, each defined by a per-species model descriptor that controls body proportions, appendage configuration, surface material, and animation style. Wild creatures spawn into the voxel world, can be encountered, and fought through a turn-based battle system with real-time 3D attack visuals. Each move family (Fire, Water, Electric, Ground, Psychic, and more) has a distinct projectile trajectory and impact effect rendered using the game's cube and triangle effect primitives. A starter selection screen, XP/level progression, and battle HUD round out the playable demo. The graphics focus is the three shadow techniques, all selectable at runtime via the diagnostics HUD with a shadow-strength slider.
+
+AMBIENT OCCLUSION
+The baseline technique. Each visible cube bakes per-face occlusion samples from neighboring voxel occupancy into the vertex buffer at chunk build time. In the fragment shader the four corner samples are bilinearly interpolated across the face and converted to an attenuation term:
+
+AO = mix(0.3, 1.0, pow(clamp(ao / 3, 0, 1), 0.75))
+
+Cost: zero extra GPU passes, zero extra memory, zero geometry overhead. Quality: stable contact darkening at concave voxel corners, but no directional cast shadows. Sunlight angle has no effect.
+
+SHADOW MAPS
+A directional light-space camera renders the scene's depth into a 16 MB texture (the shadow map). In the main pass, each fragment's world position p is transformed into light space:
+
+p_l = LVP * p
+
+The receiver depth is compared against the stored caster depth with a slope-scaled bias to suppress self-shadowing acne. A 3x3 percentage-closer filter averages nine depth comparisons for soft edges, and the final direct light term is:
+
+visibility = mean(depth_receiver - bias <= depth_shadow)
+direct = mix(1 - strength, 1, visibility)
+
+Cost: one extra depth-only GPU pass, 16 MB shadow map. Quality: correct directional cast shadows across large terrain, but aliasing, acne, and peter-panning artifacts remain visible when the projection covers the full chunk radius.
+
+STENCIL SHADOW VOLUMES (Z-FAIL / CARMACK'S REVERSE)
+
+The most geometrically exact technique. The directional sun/moon vector is treated as a normalized directional light L. For each selected caster cube:
+
+- Front cap: faces where dot(n, L) > 0 are emitted as-is.
+- Back cap: the same faces are extruded by a large scalar along -L.
+- Silhouette quads: edges shared by one lit and one unlit face are extruded into quads connecting the original edge to the extruded edge.
+
+The resulting closed volume is rendered into the stencil buffer with color and depth writes disabled. Back faces increment the stencil counter on depth-fail; front faces decrement on depth-fail (z-fail / Carmack's Reverse, robust when the camera is inside a volume). Fragments with nonzero stencil are in shadow. A full-screen overlay pass multiplies the framebuffer color by a darkness factor derived from the shadow-strength slider, preserving hue. Each caster cube can contribute up to 96 stencil vertices. A caster filter selects only silhouette-contributing terrain cubes to stay interactive.
+Cost: three GPU passes, ~2.1 MB peak geometry, fill-rate proportional to volume screen coverage. Quality: pixel-stable hard shadow masks with no aliasing or bias tuning required. References: NVIDIA GPU Gems 3 Ch. 11 "Efficient and Robust Shadow Volumes";
+Paul's Projects OpenGL Shadow Volume Technical Info; OpenGL SIGGRAPH 1999 stencil shadow volume notes.
+
+SECTION 2: Implementation Engineering, Results, and Known Limitations
+The renderer is organized around RenderView in src/client/engine/render/renderer.ts. The normal terrain pass uses blankCube.vert/frag shaders. The shadow-map pass uses shadowMap.vert/frag with a shared LightViewProjection uniform. The stencil-volume path uses shadowVolume.vert/frag for the stencil geometry and shadowOverlay.vert/frag for the full-screen darkening pass. SceneLighting exposes both a skybox sun position and a normalized directional light vector so all subsystems (terrain, entity instancing, objects, shadow maps, volumes) share a consistent light direction.
+Shadow volume geometry construction is isolated in src/client/engine/render/shadow-volume.ts, with per-frame caster selection in shadow-volume-casters.ts. Tests verify: the generated volume is closed (no boundary edges), triangle winding points outward for correct front/back stencil counting, vertices extrude away from L, and the optimized caster filter retains silhouette-contributing cubes while dropping flat terrain. Creature rendering uses instanced draw calls with per-instance attributes aAccentColor, aAppendageMaskA, aAppendageMaskB, and aMaterialProfile to express the per-species material palette from the model descriptor without extra draw calls. A silhouette overlap quality gate rejects species whose side/front/top profiles overlap more than a measured baseline threshold. The diagnostics HUD exposes runtime technique switching and shadow strength. Preferences persist these settings in local storage. Benchmark query parameters (benchShadow, benchShadowStrength) drive automated capture via scripts/capture-shadow-benchmarks.mjs, which uses the Chrome DevTools Protocol to collect CPU/GPU frame timings and exports JSON, CSV, Markdown, and SVG graph artifacts into docs/final-project/.
+
+BENCHMARK RESULTS  (open scene, 5-second run, shadow strength 0.72)
+
+Technique 
+Avg CPU (ms/frame)
+Avg GPU
+(ms/frame)
+Avg FPS
+Est. MB
+Ambient Occlusion
+1.65
+2.24
+112.0
+0
+Shadow Map
+1.60
+1.97
+107.8
+16.0
+Shadow Volume
+1.93
+3.13
+111.4
+2.1
+
+
+All three techniques run at well over 100 FPS on the test machine. Shadow maps have the lowest GPU cost but require 16 MB of texture memory and an extra depth pass. Shadow volumes have the highest GPU cost (3.13 ms vs 1.97 ms) due to fill rate, but use only 2.1 MB and produce hard, alias-free shadows without any bias parameter. Ambient occlusion sits in between in GPU cost (2.24 ms) but has no memory overhead and no directional shadowing ability. The benchmark can be regenerated with:node scripts/capture-shadow-benchmarks.mjs
+
+KNOWN BUGS AND LIMITATIONS
+- Shadow maps cast only from/onto terrain cubes; custom entity and creature
+    shaders do not yet sample the shadow map texture.
+- Shadow volumes use a finite extrusion distance rather than true homogeneous
+    infinity, because WebGL does not expose desktop-style depth clamp. The far
+    cap may fail for very shallow sun angles.
+- Both advanced techniques produce hard shadows only. Shadow maps include a
+    3x3 PCF pass that approximates soft edges; volumes do not.
+- The gameplay layer is functional for the demo, but the creature roster
+    covers only three starter types (15 species). Expansion to all 18 planned
+    types and deeper balance tuning remain future work.
+- Wild creature AI uses simple wander/flee behavior without pathfinding.
+

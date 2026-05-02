@@ -1,22 +1,27 @@
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-const DEFAULT_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const DEFAULT_CHROME =
+  process.platform === "win32"
+    ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    : "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const BASE_URL = process.env.BENCHMARK_URL ?? "http://127.0.0.1:5175/";
 const CHROME_PATH = process.env.CHROME_PATH ?? DEFAULT_CHROME;
 const REMOTE_DEBUGGING_PORT = Number(process.env.CHROME_DEBUG_PORT ?? 9333);
 const OUTPUT_DIR = process.env.BENCHMARK_OUT ?? "docs/final-project";
 const SCENES = (process.env.BENCHMARK_SCENES ?? "open,foliage,cave,mixed").split(",");
 const TECHNIQUES = ["ambient-occlusion", "shadow-map", "shadow-volume"];
-const DURATION_S = Number(process.env.BENCHMARK_SECONDS ?? 5);
-const WARMUP_S = Number(process.env.BENCHMARK_WARMUP ?? 1);
+const DURATION_S = Number(process.env.BENCHMARK_SECONDS ?? 10);
+const WARMUP_S = Number(process.env.BENCHMARK_WARMUP ?? 8);
 const SHADOW_STRENGTH = Number(process.env.BENCHMARK_SHADOW_STRENGTH ?? 0.72);
 
 let chrome;
 
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
+  await killExistingOnPort(REMOTE_DEBUGGING_PORT);
   chrome = launchChrome();
   process.on("exit", () => chrome?.kill());
   await waitForChrome();
@@ -25,23 +30,32 @@ async function main() {
   for (const scene of SCENES) {
     for (const technique of TECHNIQUES) {
       console.log(`[benchmark] ${scene} / ${technique}`);
-      const record = await runBenchmark(scene, technique);
+      let record;
+      try {
+        record = await runBenchmark(scene, technique);
+      } catch (err) {
+        console.error(`[benchmark] FAILED ${scene}/${technique}: ${err.message}`);
+        continue;
+      }
       records.push(record);
+      // Write partial results after each run so a later failure doesn't lose data.
+      const summaries = records.map((r) => r.summary);
+      await writeFile(join(OUTPUT_DIR, "shadow-benchmark-results.json"), `${JSON.stringify(records, null, 2)}\n`);
+      await writeFile(join(OUTPUT_DIR, "shadow-benchmark-summary.csv"), summariesToCsv(summaries));
+      await writeFile(join(OUTPUT_DIR, "shadow-benchmark-summary.md"), summariesToMarkdown(summaries));
+      await writeFile(join(OUTPUT_DIR, "shadow-benchmark-graphs.svg"), summariesToSvg(summaries));
+      console.log(`[benchmark] saved ${records.length} record(s) so far`);
     }
   }
 
-  const summaries = records.map((record) => record.summary);
-  await writeFile(join(OUTPUT_DIR, "shadow-benchmark-results.json"), `${JSON.stringify(records, null, 2)}\n`);
-  await writeFile(join(OUTPUT_DIR, "shadow-benchmark-summary.csv"), summariesToCsv(summaries));
-  await writeFile(join(OUTPUT_DIR, "shadow-benchmark-summary.md"), summariesToMarkdown(summaries));
-  await writeFile(join(OUTPUT_DIR, "shadow-benchmark-graphs.svg"), summariesToSvg(summaries));
   chrome.kill();
+  console.log(`[benchmark] complete. ${records.length} record(s) written to ${OUTPUT_DIR}`);
 }
 
 function launchChrome() {
-  const userDataDir = `/private/tmp/minceraft-shadow-bench-${Date.now()}`;
+  const userDataDir = join(tmpdir(), `minceraft-shadow-bench-${Date.now()}`);
   return spawn(CHROME_PATH, [
-    "--headless=new",
+    "--headless=old",
     `--remote-debugging-port=${REMOTE_DEBUGGING_PORT}`,
     `--user-data-dir=${userDataDir}`,
     "--disable-background-timer-throttling",
@@ -49,6 +63,10 @@ function launchChrome() {
     "--no-first-run",
     "--no-default-browser-check",
     "--window-size=1280,720",
+    "--enable-webgl",
+    "--use-gl=angle",
+    "--use-angle=d3d11",
+    "--ignore-gpu-blocklist",
     "about:blank",
   ]);
 }
@@ -85,8 +103,25 @@ async function runBenchmark(scene, technique) {
   const client = await connectCdp(target.webSocketDebuggerUrl);
   await client.send("Runtime.enable");
   await client.send("Page.enable");
+  // Clear any stale result from a previous run on this Chrome instance.
+  await client.send("Runtime.evaluate", {
+    expression: "delete globalThis.__minceraftBenchmarkLast",
+    returnByValue: false,
+  });
+  client.onMessage((message) => {
+    if (message.method === "Runtime.consoleAPICalled") {
+      const args = message.params?.args ?? [];
+      const text = args.map((a) => a.value ?? a.description ?? "").join(" ");
+      if (text) console.log(`  [page] ${text}`);
+    }
+    if (message.method === "Runtime.exceptionThrown") {
+      const desc = message.params?.exceptionDetails?.exception?.description ?? "unknown";
+      console.error(`  [page error] ${desc.split("\n")[0]}`);
+    }
+  });
 
-  const deadline = Date.now() + (DURATION_S + 35) * 1000;
+  const deadline = Date.now() + (DURATION_S + WARMUP_S + 120) * 1000;
+  let lastDiagS = 0;
   while (Date.now() < deadline) {
     const evaluation = await client.send("Runtime.evaluate", {
       expression: "JSON.stringify(globalThis.__minceraftBenchmarkLast ?? null)",
@@ -98,6 +133,24 @@ async function runBenchmark(scene, technique) {
       await closeTarget(target.id);
       return JSON.parse(value);
     }
+
+    const elapsedS = Math.floor((Date.now() - (deadline - (DURATION_S + 35) * 1000)) / 1000);
+    if (elapsedS - lastDiagS >= 5) {
+      lastDiagS = elapsedS;
+      const diag = await client.send("Runtime.evaluate", {
+        expression: `JSON.stringify({
+          benchmarkLast: typeof globalThis.__minceraftBenchmarkLast,
+          worldReady: typeof globalThis.__minceraftWorldReady !== 'undefined' ? globalThis.__minceraftWorldReady : 'n/a',
+          canvasCount: document.querySelectorAll('canvas').length,
+          webgl: !!document.querySelector('canvas')?.getContext?.('webgl2'),
+          wsState: globalThis.__minceraftWsState ?? 'n/a',
+          bodyText: document.body?.innerText?.slice(0, 120) ?? ''
+        })`,
+        returnByValue: true,
+      }).catch(() => ({ result: { value: null } }));
+      if (diag.result?.value) console.log(`  [diag +${elapsedS}s] ${diag.result.value}`);
+    }
+
     await delay(300);
   }
 
@@ -118,13 +171,38 @@ async function closeTarget(targetId) {
   await fetch(`http://127.0.0.1:${REMOTE_DEBUGGING_PORT}/json/close/${targetId}`).catch(() => undefined);
 }
 
+async function killExistingOnPort(port) {
+  if (process.platform === "win32") {
+    // Find and kill any process listening on the debug port.
+    const { execSync } = await import("node:child_process");
+    try {
+      const out = execSync(`netstat -ano | findstr :${port}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      const pids = new Set(
+        out.split("\n")
+          .filter((l) => l.includes("LISTENING"))
+          .map((l) => l.trim().split(/\s+/).at(-1))
+          .filter(Boolean),
+      );
+      for (const pid of pids) {
+        try { execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore" }); } catch { /* already gone */ }
+      }
+      if (pids.size > 0) {
+        console.log(`[benchmark] killed ${pids.size} stale process(es) on port ${port}`);
+        await delay(500);
+      }
+    } catch { /* no process found */ }
+  }
+}
+
 function connectCdp(url) {
   const ws = new WebSocket(url);
   let nextId = 1;
   const pending = new Map();
+  const messageListeners = [];
 
   ws.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
+    for (const listener of messageListeners) listener(message);
     if (!message.id) return;
     const request = pending.get(message.id);
     if (!request) return;
@@ -142,6 +220,9 @@ function connectCdp(url) {
           return new Promise((requestResolve, requestReject) => {
             pending.set(id, { resolve: requestResolve, reject: requestReject });
           });
+        },
+        onMessage(listener) {
+          messageListeners.push(listener);
         },
         close() {
           ws.close();

@@ -278,7 +278,7 @@ export class GameRoom extends DurableObject<Env> {
     this.ensureInitialized();
     this.ensureJoined(playerId);
     if (this.battleSystem.chooseStarter(playerId, speciesId)) {
-      this.needsBroadcast = true;
+      this.queueBroadcast(true);
     }
   }
 
@@ -286,7 +286,7 @@ export class GameRoom extends DurableObject<Env> {
     this.ensureInitialized();
     this.ensureJoined(playerId);
     if (this.battleSystem.startBattle(playerId, creatureId)) {
-      this.needsBroadcast = true;
+      this.queueBroadcast(true);
     }
   }
 
@@ -294,7 +294,7 @@ export class GameRoom extends DurableObject<Env> {
     this.ensureInitialized();
     this.ensureJoined(playerId);
     if (this.battleSystem.chooseBattleMove(playerId, moveId)) {
-      this.needsBroadcast = true;
+      this.queueBroadcast(true);
     }
   }
 
@@ -414,6 +414,17 @@ export class GameRoom extends DurableObject<Env> {
       this.tickRunning = false;
       this.lastTickTime = performance.now();
     }
+  }
+
+  /**
+   * Marks room state for broadcast, and optionally flushes immediately for
+   * latency-sensitive actions (for example, battle start RPCs).
+   */
+  private queueBroadcast(immediate = false): void {
+    this.needsBroadcast = true;
+    if (!immediate || this.tickRunning || this.listeners.size === 0) return;
+    this.needsBroadcast = false;
+    this.broadcast();
   }
 
   /**

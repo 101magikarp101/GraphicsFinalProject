@@ -1020,7 +1020,7 @@ const INPUT_SEND_INTERVAL_MS = 50;
 const BENCHMARK_TERMINAL_OUTPUT_ENABLED = false;
 const AUTO_BATTLE_TOUCH_RADIUS = 2.25;
 const AUTO_BATTLE_TOUCH_HEIGHT = 2.4;
-const AUTO_BATTLE_TOUCH_COOLDOWN_MS = 850;
+const AUTO_BATTLE_TOUCH_COOLDOWN_MS = 200;
 const MAX_ANIMATED_WALK_SPEED = PLAYER_SPEED * 1.35;
 const THIRD_PERSON_CAMERA_DISTANCE = 4;
 const THIRD_PERSON_CAMERA_MIN_DISTANCE = 0.35;
@@ -1038,10 +1038,10 @@ const PLAYER_INSTANCE_LAYOUT: ReadonlyArray<{ name: string; size: number }> = [
 ];
 
 const BENCHMARK_SCENE_ANCHORS: Record<BenchmarkScene, readonly [number, number, number]> = {
-  open: [0, 82, 0],
-  foliage: [46, 78, 46],
+  open: [0, 65, 0],
+  foliage: [46, 63, 46],
   cave: [0, 34, 0],
-  mixed: [80, 72, -20],
+  mixed: [80, 62, -20],
 };
 
 function computeP95(values: readonly number[]): number {
@@ -1568,19 +1568,28 @@ export function createGame(args: CreateGameArgs): GameState {
   // TODO: refactor to be general packet handling rather than only inputs
   let nextPacketSequence = 1;
   let pendingPacket: Omit<PlayerPositionPacket, "sequence"> | undefined;
+  let queuedPacketWhileInFlight: Omit<PlayerPositionPacket, "sequence"> | undefined;
+  let positionPacketInFlight = false;
 
-  // track player position changes to send to server
-  createEffect(() => {
-    const player = room().player();
-    if (!player) return;
-    pendingPacket = {
-      x: player.state.x,
-      y: player.state.y,
-      z: player.state.z,
-      yaw: player.state.yaw,
-      pitch: player.state.pitch,
-    };
-  });
+  const sendLatestPositionPacket = (session: { sendPosition: (packet: PlayerPositionPacket) => void }): void => {
+    if (!pendingPacket || positionPacketInFlight) return;
+
+    const packet = pendingPacket;
+    positionPacketInFlight = true;
+    packetCount++;
+
+    Promise.resolve(session.sendPosition({ ...packet, sequence: nextPacketSequence++ }))
+      .catch(() => {})
+      .finally(() => {
+        positionPacketInFlight = false;
+        if (!queuedPacketWhileInFlight) return;
+        pendingPacket = queuedPacketWhileInFlight;
+        queuedPacketWhileInFlight = undefined;
+        const nextSession = room().session();
+        if (!nextSession) return;
+        sendLatestPositionPacket(nextSession);
+      });
+  };
 
   let packetCount = 0;
   // Heartbeat: keep sending the latest known position at INPUT_SEND_INTERVAL_MS
@@ -1591,8 +1600,11 @@ export function createGame(args: CreateGameArgs): GameState {
     () => {
       const session = room().session();
       if (!pendingPacket || !session) return;
-      session.sendPosition({ ...pendingPacket, sequence: nextPacketSequence++ });
-      packetCount++;
+      if (positionPacketInFlight) {
+        queuedPacketWhileInFlight = pendingPacket;
+        return;
+      }
+      sendLatestPositionPacket(session);
     },
     INPUT_SEND_INTERVAL_MS,
     setInterval,
@@ -1706,6 +1718,13 @@ export function createGame(args: CreateGameArgs): GameState {
       };
       room().replicated()?.predict(next);
     }
+    pendingPacket = {
+      x: player.state.x,
+      y: player.state.y,
+      z: player.state.z,
+      yaw: player.state.yaw,
+      pitch: player.state.pitch,
+    };
     if (!activeBattle?.active) {
       if (perspectiveMode === "first-person") {
         camera.setOrientation(yaw, pitch);
