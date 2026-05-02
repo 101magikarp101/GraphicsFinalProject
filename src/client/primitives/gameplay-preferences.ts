@@ -12,6 +12,8 @@ const MIN_MOUSE_SENSITIVITY = 0.25;
 const MAX_MOUSE_SENSITIVITY = 2;
 const MIN_SHADOW_STRENGTH = 0;
 const MAX_SHADOW_STRENGTH = 0.95;
+const MIN_BATTLE_HUD_SCALE = 0.65;
+const MAX_BATTLE_HUD_SCALE = 1;
 
 export interface GameplayPreferences {
   pendingPlayerName: string;
@@ -20,8 +22,10 @@ export interface GameplayPreferences {
   renderDistance: number;
   showDiagnostics: boolean;
   showMobHighlight: boolean;
+  showModelDebugOverlay: boolean;
   shadowTechnique: ShadowTechnique;
   shadowStrength: number;
+  battleHudScale: number;
 }
 
 const DEFAULT_PREFERENCES: GameplayPreferences = {
@@ -31,8 +35,10 @@ const DEFAULT_PREFERENCES: GameplayPreferences = {
   renderDistance: DEFAULT_RENDER_DISTANCE,
   showDiagnostics: true,
   showMobHighlight: true,
+  showModelDebugOverlay: false,
   shadowTechnique: "ambient-occlusion",
   shadowStrength: 0.72,
+  battleHudScale: 1,
 };
 
 export function createGameplayPreferences() {
@@ -48,8 +54,10 @@ export function createGameplayPreferences() {
       renderDistance: preferences.renderDistance,
       showDiagnostics: preferences.showDiagnostics,
       showMobHighlight: preferences.showMobHighlight,
+      showModelDebugOverlay: preferences.showModelDebugOverlay,
       shadowTechnique: preferences.shadowTechnique,
       shadowStrength: preferences.shadowStrength,
+      battleHudScale: preferences.battleHudScale,
     } satisfies GameplayPreferences);
 
     window.localStorage.setItem(STORAGE_KEY, serialized);
@@ -79,11 +87,17 @@ export function createGameplayPreferences() {
     setShowMobHighlight(showMobHighlight: boolean) {
       setPreferences("showMobHighlight", showMobHighlight);
     },
+    setShowModelDebugOverlay(showModelDebugOverlay: boolean) {
+      setPreferences("showModelDebugOverlay", showModelDebugOverlay);
+    },
     setShadowTechnique(shadowTechnique: ShadowTechnique) {
       setPreferences("shadowTechnique", shadowTechnique);
     },
     setShadowStrength(shadowStrength: number) {
       setPreferences("shadowStrength", clampShadowStrength(shadowStrength));
+    },
+    setBattleHudScale(scale: number) {
+      setPreferences("battleHudScale", clampBattleHudScale(scale));
     },
   } as const;
 }
@@ -111,8 +125,10 @@ function readGameplayPreferences(): GameplayPreferences {
       renderDistance: clampRenderDistance(parsed.renderDistance ?? DEFAULT_PREFERENCES.renderDistance),
       showDiagnostics: parsed.showDiagnostics ?? DEFAULT_PREFERENCES.showDiagnostics,
       showMobHighlight: parsed.showMobHighlight ?? DEFAULT_PREFERENCES.showMobHighlight,
+      showModelDebugOverlay: parsed.showModelDebugOverlay ?? DEFAULT_PREFERENCES.showModelDebugOverlay,
       shadowTechnique: parseShadowTechnique(parsed.shadowTechnique),
       shadowStrength: clampShadowStrength(parsed.shadowStrength ?? DEFAULT_PREFERENCES.shadowStrength),
+      battleHudScale: clampBattleHudScale(parsed.battleHudScale ?? DEFAULT_PREFERENCES.battleHudScale),
     };
   } catch {
     return {
@@ -149,4 +165,9 @@ function clampShadowStrength(value: number): number {
 
 function parseShadowTechnique(value: unknown): ShadowTechnique {
   return typeof value === "string" && isShadowTechnique(value) ? value : DEFAULT_PREFERENCES.shadowTechnique;
+}
+
+function clampBattleHudScale(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_PREFERENCES.battleHudScale;
+  return Math.min(MAX_BATTLE_HUD_SCALE, Math.max(MIN_BATTLE_HUD_SCALE, Math.round(value * 100) / 100));
 }

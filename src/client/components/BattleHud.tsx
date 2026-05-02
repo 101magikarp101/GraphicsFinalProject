@@ -6,6 +6,7 @@ const LOG_LINE_REVEAL_MS = 950;
 
 interface BattleHudProps {
   battle: BattleSessionState;
+  hudScale: number;
   onSelectMove: (moveId: string) => void;
 }
 
@@ -34,7 +35,6 @@ export function BattleHud(props: BattleHudProps) {
   const xpPct = () =>
     Math.round((((props.battle.starter.experience ?? xpStart()) - xpStart()) / Math.max(1, xpEnd() - xpStart())) * 100);
   const selectMove = (moveId: string) => {
-    if (!props.battle.canSelectMove) return;
     props.onSelectMove(moveId);
   };
   const visibleLog = () => {
@@ -67,33 +67,39 @@ export function BattleHud(props: BattleHudProps) {
 
   return (
     <div class="absolute inset-x-0 bottom-0 z-30 p-3 md:p-4">
-      <div class="mx-auto w-full max-w-5xl border-3 border-[#242d47] bg-[#111726e8] p-3 shadow-[0_8px_28px_rgba(0,0,0,0.5)] backdrop-blur-[2px]">
+      <div
+        class="mx-auto w-full max-w-5xl border-3 border-white/40 bg-[rgba(245,245,245,0.14)] p-3 shadow-[0_8px_28px_rgba(0,0,0,0.25)] backdrop-blur-[2px]"
+        style={{
+          transform: `scale(${Math.max(0.65, Math.min(1, props.hudScale))})`,
+          "transform-origin": "bottom center",
+        }}
+      >
         <div class="grid gap-3 md:grid-cols-2">
-          <div class="border border-[#2f3a5a] bg-[#141b2d] p-3">
-            <div class="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#9ab0ff]">Your Starter</div>
+          <div class="border border-white/35 bg-[rgba(255,255,255,0.12)] p-3">
+            <div class="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-white/85">Your Starter</div>
             <div class="mt-1 font-mono text-xl font-black uppercase text-white">{props.battle.starter.speciesId}</div>
-            <div class="mt-2 h-2.5 w-full bg-[#0d1220]">
-              <div class="h-full bg-[#67d36d]" style={{ width: `${starterHpPct()}%` }} />
+            <div class="mt-2 h-2.5 w-full bg-black/18">
+              <div class="h-full bg-white/85" style={{ width: `${starterHpPct()}%` }} />
             </div>
-            <div class="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-[#d7def9]">
+            <div class="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-white/85">
               HP {displayedStarterHp()}/{props.battle.starter.maxHp} · Lv {props.battle.starter.level} ·{" "}
               {props.battle.starter.status}
             </div>
-            <div class="mt-2 h-1.5 w-full bg-[#0d1220]">
-              <div class="h-full bg-[#8ca7ff]" style={{ width: `${Math.max(0, Math.min(100, xpPct()))}%` }} />
+            <div class="mt-2 h-1.5 w-full bg-black/18">
+              <div class="h-full bg-white/70" style={{ width: `${Math.max(0, Math.min(100, xpPct()))}%` }} />
             </div>
-            <div class="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[#aebbf1]">
+            <div class="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-white/70">
               XP {props.battle.starter.experience ?? 0}/{xpEnd()}
             </div>
           </div>
 
-          <div class="border border-[#5a3030] bg-[#241417] p-3">
-            <div class="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#ff9a9a]">Wild Opponent</div>
+          <div class="border border-white/35 bg-[rgba(255,255,255,0.12)] p-3">
+            <div class="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-white/85">Wild Opponent</div>
             <div class="mt-1 font-mono text-xl font-black uppercase text-white">{props.battle.wild.speciesId}</div>
-            <div class="mt-2 h-2.5 w-full bg-[#1b0f11]">
-              <div class="h-full bg-[#ff6767]" style={{ width: `${wildHpPct()}%` }} />
+            <div class="mt-2 h-2.5 w-full bg-black/18">
+              <div class="h-full bg-white/85" style={{ width: `${wildHpPct()}%` }} />
             </div>
-            <div class="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-[#f6d6d6]">
+            <div class="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-white/85">
               HP {displayedWildHp()}/{props.battle.wild.maxHp} · Lv {props.battle.wild.level} ·{" "}
               {props.battle.wild.status}
             </div>
@@ -101,7 +107,7 @@ export function BattleHud(props: BattleHudProps) {
         </div>
 
         <div class="mt-3 grid gap-3 md:grid-cols-[2fr_1fr]">
-          <div class="h-28 overflow-auto whitespace-pre-line border border-[#313b59] bg-[#0f1526] p-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#c7d2ff]">
+          <div class="h-28 overflow-auto whitespace-pre-line border border-white/35 bg-[rgba(255,255,255,0.11)] p-2 font-mono text-[11px] uppercase tracking-[0.08em] text-white/92">
             {props.battle.phase === "resolving" ? "Resolving turn...\n" : ""}
             {visibleLog().join("\n")}
           </div>
@@ -110,20 +116,27 @@ export function BattleHud(props: BattleHudProps) {
             {props.battle.availableMoves.map((moveId) => (
               <button
                 type="button"
-                class="cursor-pointer border border-[#3d4a70] bg-[#18213a] p-2 text-left disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!props.battle.canSelectMove}
-                onClick={() => selectMove(moveId)}
+                class="cursor-pointer border border-white/35 bg-[rgba(255,255,255,0.12)] p-2 text-left"
                 onContextMenu={(event) => event.preventDefault()}
                 onMouseDown={(event) => {
-                  if (event.button === 0) return;
+                  if (event.button === 0) {
+                    event.preventDefault();
+                    selectMove(moveId);
+                    return;
+                  }
                   event.preventDefault();
                   event.stopPropagation();
                 }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  selectMove(moveId);
+                }}
               >
-                <div class="font-mono text-[11px] font-black uppercase tracking-[0.08em] text-white">
+                <div class="font-mono text-[11px] font-black uppercase tracking-[0.08em] text-white/95">
                   {MOVE_LIBRARY_BY_ID[moveId as keyof typeof MOVE_LIBRARY_BY_ID]?.name ?? moveId}
                 </div>
-                <div class="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[#b7c3ea]">{moveId}</div>
+                <div class="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-white/65">{moveId}</div>
               </button>
             ))}
           </div>

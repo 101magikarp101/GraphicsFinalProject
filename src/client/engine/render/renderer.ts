@@ -104,6 +104,7 @@ export class Renderer {
   private readonly debugShadowVolumeScale = new Float32Array([1, 1, 1, 0]);
   private readonly debugLightArrowPositions = new Float32Array(6 * 4);
   private lastShadowVolumeCubePositions: Float32Array | null = null;
+  private lastDebugShadowVolumeDirectionKey = "";
   private lastCubePositions: Float32Array | null = null;
   private lastCubeColors: Float32Array | null = null;
   private lastCubeAmbientOcclusion: Uint8Array | null = null;
@@ -160,20 +161,21 @@ export class Renderer {
       this.lastCubePositions = view.cubePositions;
     }
     const shouldDrawShadowVolumeMask = this.shouldDrawShadowVolumeMask(view);
-    const casterDirectionKey = shadowVolumeCasterDirectionKey(view.lightDirection);
-    if (
-      shouldDrawShadowVolumeMask &&
-      (view.cubePositions !== this.lastShadowVolumeCubePositions ||
-        casterDirectionKey !== this.lastShadowVolumeCasterDirectionKey)
-    ) {
-      const casters = buildShadowVolumeCasterPositions(view.cubePositions, view.lightDirection);
-      this.shadowVolumeCasterPositions = casters.positions;
-      this.shadowVolumeCasterScales = casters.scales;
-      this.shadowVolumeCasterCount = casters.count;
-      this.shadowVolumeRenderPass.updateAttributeBuffer("aOffset", this.shadowVolumeCasterPositions);
-      this.shadowVolumeRenderPass.updateAttributeBuffer("aScale", this.shadowVolumeCasterScales);
-      this.lastShadowVolumeCubePositions = view.cubePositions;
-      this.lastShadowVolumeCasterDirectionKey = casterDirectionKey;
+    if (shouldDrawShadowVolumeMask) {
+      const casterDirectionKey = shadowVolumeCasterDirectionKey(view.lightDirection);
+      if (
+        view.cubePositions !== this.lastShadowVolumeCubePositions ||
+        casterDirectionKey !== this.lastShadowVolumeCasterDirectionKey
+      ) {
+        const casters = buildShadowVolumeCasterPositions(view.cubePositions, view.lightDirection);
+        this.shadowVolumeCasterPositions = casters.positions;
+        this.shadowVolumeCasterScales = casters.scales;
+        this.shadowVolumeCasterCount = casters.count;
+        this.shadowVolumeRenderPass.updateAttributeBuffer("aOffset", this.shadowVolumeCasterPositions);
+        this.shadowVolumeRenderPass.updateAttributeBuffer("aScale", this.shadowVolumeCasterScales);
+        this.lastShadowVolumeCubePositions = view.cubePositions;
+        this.lastShadowVolumeCasterDirectionKey = casterDirectionKey;
+      }
     }
     if (view.cubeColors !== this.lastCubeColors) {
       this.blankCubeRenderPass.updateAttributeBuffer("aColor", view.cubeColors);
@@ -316,7 +318,7 @@ export class Renderer {
     gl.colorMask(false, false, false, false);
     gl.depthMask(false);
     gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
+    gl.depthFunc(gl.LESS);
     gl.disable(gl.CULL_FACE);
 
     gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.INCR, gl.KEEP);
@@ -371,7 +373,7 @@ export class Renderer {
     gl.colorMask(false, false, false, false);
     gl.depthMask(false);
     gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
+    gl.depthFunc(gl.LESS);
     gl.disable(gl.CULL_FACE);
     gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.INCR, gl.KEEP);
     gl.stencilOpSeparate(gl.FRONT, gl.KEEP, gl.DECR, gl.KEEP);
@@ -504,13 +506,22 @@ export class Renderer {
   private updateShadowVolumeGeometry(): void {
     const lightDirection = this.currentView.lightDirection;
     const key = shadowVolumeCasterDirectionKey(lightDirection);
-    if (key === this.lastShadowVolumeDirectionKey) return;
-    this.lastShadowVolumeDirectionKey = key;
+    const shouldUpdateMain = key !== this.lastShadowVolumeDirectionKey;
+    const shouldUpdateDebug = this.currentView.debugShadowVolumes && key !== this.lastDebugShadowVolumeDirectionKey;
+    if (!shouldUpdateMain && !shouldUpdateDebug) return;
+
     const geometry = createDirectionalCubeShadowVolumeGeometry(
       new Vec3([lightDirection[0] ?? 0, lightDirection[1] ?? 0, lightDirection[2] ?? 1]),
     );
-    this.shadowVolumeRenderPass.updateAttributeBuffer("aVertPos", geometry);
-    this.debugShadowVolumeRenderPass.updateAttributeBuffer("aVertPos", geometry);
+
+    if (shouldUpdateMain) {
+      this.lastShadowVolumeDirectionKey = key;
+      this.shadowVolumeRenderPass.updateAttributeBuffer("aVertPos", geometry);
+    }
+    if (shouldUpdateDebug) {
+      this.lastDebugShadowVolumeDirectionKey = key;
+      this.debugShadowVolumeRenderPass.updateAttributeBuffer("aVertPos", geometry);
+    }
   }
 
   private initEntityPass(pass: RenderPass, def: EntityPassDef): void {
@@ -1199,6 +1210,17 @@ export class Renderer {
     });
     pass.addUniform("uShadowStrength", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
       gl.uniform1f(loc, this.currentView.shadowStrength);
+    });
+    pass.addUniform("uShadowTechnique", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform1i(loc, shadowTechniqueIndex(this.currentView.shadowTechnique));
+    });
+    pass.addUniform("uShadowMap", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, this.shadowDepthTexture);
+      gl.uniform1i(loc, 3);
+    });
+    pass.addUniform("uShadowMapTexelSize", (gl: WebGL2RenderingContext, loc: WebGLUniformLocation) => {
+      gl.uniform2fv(loc, this.shadowMapTexelSize);
     });
   }
 }

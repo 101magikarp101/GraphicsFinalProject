@@ -13,6 +13,9 @@ interface SettingsMenuProps {
   onRenderDistanceInput: (value: number) => void;
   onShowDiagnosticsInput: (value: boolean) => void;
   onShowMobHighlightInput: (value: boolean) => void;
+  onShowModelDebugOverlayInput: (value: boolean) => void;
+  onBattleHudScaleInput: (value: number) => void;
+  onExportModelSnapshot: () => void;
 }
 
 export function SettingsMenu(props: SettingsMenuProps) {
@@ -86,6 +89,20 @@ export function SettingsMenu(props: SettingsMenuProps) {
               onInput={props.onShowMobHighlightInput}
             />
           </SettingCard>
+
+          <SettingCard label="Model Tooling">
+            <div class="space-y-3">
+              <ToggleRow
+                checked={props.preferences.showModelDebugOverlay}
+                description="Keep model diagnostics visible in runtime overlays."
+                label="Model debug overlay"
+                onInput={props.onShowModelDebugOverlayInput}
+              />
+              <Button class="w-full px-3 py-2 text-sm" onClick={props.onExportModelSnapshot}>
+                Export model snapshot CSV
+              </Button>
+            </div>
+          </SettingCard>
         </div>
 
         <div class="mt-4">
@@ -102,6 +119,25 @@ export function SettingsMenu(props: SettingsMenuProps) {
               />
               <div class="w-24 text-right font-mono text-sm font-bold tracking-[0.04em] text-white [text-shadow:0_1px_0_rgba(0,0,0,0.7)]">
                 {props.preferences.renderDistance} chunk{props.preferences.renderDistance === 1 ? "" : "s"}
+              </div>
+            </div>
+          </SettingCard>
+        </div>
+
+        <div class="mt-4">
+          <SettingCard label="Battle HUD Scale">
+            <div class="flex items-center gap-3">
+              <input
+                type="range"
+                min="0.65"
+                max="1"
+                step="0.01"
+                value={props.preferences.battleHudScale}
+                class="w-full accent-[#d7d7d7]"
+                onInput={(event) => props.onBattleHudScaleInput(Number(event.currentTarget.value))}
+              />
+              <div class="w-14 text-right font-mono text-sm font-bold tracking-[0.04em] text-white [text-shadow:0_1px_0_rgba(0,0,0,0.7)]">
+                {Math.round(props.preferences.battleHudScale * 100)}%
               </div>
             </div>
           </SettingCard>

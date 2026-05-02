@@ -15,6 +15,7 @@ attribute float aShirtMask;
 attribute float aPart;
 attribute vec3 aPivot;
 attribute vec2 aMotion; // x = planar speed, y = phase offset
+attribute float aCommandPose;
 attribute vec3 aShirtColor;
 
 varying vec4 normal;
@@ -58,6 +59,8 @@ void main() {
   float armSwing = sampleKeyframes(walkPhase, -1.0, 0.0, 1.0, 0.0) * 0.9 * walkAmount;
   float legSwing = sampleKeyframes(walkPhase, 1.0, 0.0, -1.0, 0.0) * 0.75 * walkAmount;
   float bodyBob = sampleKeyframes(walkPhase, 0.0, 1.0, 0.0, 1.0) * 0.05 * walkAmount;
+  float commandPose = clamp(aCommandPose, 0.0, 1.0);
+  float fistRaise = commandPose * 1.35;
 
   float yaw = -aOffset.w + 3.14159265;
   vec3 localPos = aVertPos.xyz;
@@ -69,7 +72,7 @@ void main() {
   } else if (abs(aPart - PART_LEFT_ARM) < 0.5) {
     partRotation = armSwing;
   } else if (abs(aPart - PART_RIGHT_ARM) < 0.5) {
-    partRotation = -armSwing;
+    partRotation = -armSwing - fistRaise;
   } else if (abs(aPart - PART_LEFT_LEG) < 0.5) {
     partRotation = legSwing;
   } else if (abs(aPart - PART_RIGHT_LEG) < 0.5) {

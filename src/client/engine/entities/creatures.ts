@@ -25,10 +25,14 @@ export const creaturePassDef: EntityPassDef = {
   geometry: creatureGeometry,
   instancedAttributes: [
     { name: "aOffset", size: 4 },
-    { name: "aMotion", size: 2 },
+    { name: "aMotion", size: 3 },
     { name: "aScale", size: 1 },
     { name: "aPrimaryColor", size: 3 },
     { name: "aSecondaryColor", size: 3 },
+    { name: "aMorphA", size: 4 },
+    { name: "aMorphB", size: 4 },
+    { name: "aMorphC", size: 4 },
+    { name: "aAnimProfile", size: 3 },
   ],
 };
 
@@ -39,10 +43,14 @@ export const creatureHighlightPassDef: EntityPassDef = {
   geometry: creatureGeometry,
   instancedAttributes: [
     { name: "aOffset", size: 4 },
-    { name: "aMotion", size: 2 },
+    { name: "aMotion", size: 3 },
     { name: "aScale", size: 1 },
     { name: "aPrimaryColor", size: 3 },
     { name: "aSecondaryColor", size: 3 },
+    { name: "aMorphA", size: 4 },
+    { name: "aMorphB", size: 4 },
+    { name: "aMorphC", size: 4 },
+    { name: "aAnimProfile", size: 3 },
   ],
   cullFace: false,
   depthTest: false,

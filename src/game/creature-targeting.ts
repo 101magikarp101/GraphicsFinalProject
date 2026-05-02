@@ -2,9 +2,10 @@ import { getLookDirection } from "../utils/look-direction";
 import { getPlayerEyePosition, type PlayerState } from "./player";
 
 const RAY_EPSILON = 1e-6;
-export const CREATURE_TARGET_RANGE = 6;
-const CREATURE_RADIUS = 0.6;
-const CREATURE_HEIGHT = 1.35;
+export const CREATURE_TARGET_RANGE = 8;
+const CREATURE_RADIUS = 1.2;
+const CREATURE_HEIGHT = 2.15;
+const AIM_ASSIST_RADIUS = 2.05;
 
 type AimState = Pick<PlayerState, "x" | "y" | "z" | "yaw" | "pitch">;
 type CreatureCandidate = { id: string; x: number; y: number; z: number };
@@ -16,18 +17,27 @@ export function findTargetedCreatureId(
 ): string | undefined {
   const origin = getPlayerEyePosition(attacker);
   const direction = getLookDirection(attacker.yaw, attacker.pitch);
-  let nearestDistance = maxDistance;
-  let nearestTargetId: string | undefined;
+  let nearestDirectDistance = maxDistance;
+  let nearestDirectTargetId: string | undefined;
+  let nearestAssistDistance = maxDistance;
+  let nearestAssistTargetId: string | undefined;
 
   for (const candidate of candidates) {
     const hitDistance = intersectRayWithCreatureBounds(origin, direction, candidate, maxDistance);
-    if (hitDistance === undefined || hitDistance > nearestDistance) continue;
+    if (hitDistance !== undefined && hitDistance <= nearestDirectDistance) {
+      nearestDirectDistance = hitDistance;
+      nearestDirectTargetId = candidate.id;
+      continue;
+    }
 
-    nearestDistance = hitDistance;
-    nearestTargetId = candidate.id;
+    const assistDistance = aimAssistDistance(origin, direction, candidate, maxDistance);
+    if (assistDistance === undefined || assistDistance > nearestAssistDistance) continue;
+
+    nearestAssistDistance = assistDistance;
+    nearestAssistTargetId = candidate.id;
   }
 
-  return nearestTargetId;
+  return nearestDirectTargetId ?? nearestAssistTargetId;
 }
 
 function creatureBounds(target: CreatureCandidate) {
@@ -85,4 +95,34 @@ function intersectAxis(origin: number, direction: number, min: number, max: numb
   }
 
   return { entry, exit };
+}
+
+function aimAssistDistance(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  target: CreatureCandidate,
+  maxDistance: number,
+): number | undefined {
+  const centerX = target.x;
+  const centerY = target.y + CREATURE_HEIGHT * 0.5;
+  const centerZ = target.z;
+
+  const vx = centerX - origin.x;
+  const vy = centerY - origin.y;
+  const vz = centerZ - origin.z;
+
+  const along = vx * direction.x + vy * direction.y + vz * direction.z;
+  if (along < 0 || along > maxDistance) return undefined;
+
+  const nearestX = origin.x + direction.x * along;
+  const nearestY = origin.y + direction.y * along;
+  const nearestZ = origin.z + direction.z * along;
+
+  const dx = centerX - nearestX;
+  const dy = centerY - nearestY;
+  const dz = centerZ - nearestZ;
+  const perpendicular = Math.hypot(dx, dy, dz);
+  if (perpendicular > AIM_ASSIST_RADIUS) return undefined;
+
+  return along;
 }

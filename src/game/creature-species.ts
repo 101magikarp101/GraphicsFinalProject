@@ -34,6 +34,8 @@ const SPECIES = [
       { level: 1, moveId: "ember_jolt" },
       { level: 7, moveId: "smoke_veil" },
       { level: 12, moveId: "flame_rush" },
+      { level: 18, moveId: "dragon_breath" },
+      { level: 22, moveId: "blaze_arc" },
     ],
   },
   {
@@ -46,6 +48,8 @@ const SPECIES = [
       { level: 1, moveId: "ember_jolt" },
       { level: 9, moveId: "flame_rush" },
       { level: 14, moveId: "steady_focus" },
+      { level: 19, moveId: "knuckle_drive" },
+      { level: 22, moveId: "body_slammer" },
     ],
   },
   {
@@ -58,6 +62,8 @@ const SPECIES = [
       { level: 4, moveId: "ember_jolt" },
       { level: 10, moveId: "flame_rush" },
       { level: 16, moveId: "smoke_veil" },
+      { level: 20, moveId: "night_fang" },
+      { level: 22, moveId: "shadow_claw" },
     ],
   },
   {
@@ -70,6 +76,8 @@ const SPECIES = [
       { level: 1, moveId: "steady_focus" },
       { level: 11, moveId: "flame_rush" },
       { level: 15, moveId: "smoke_veil" },
+      { level: 19, moveId: "iron_comet" },
+      { level: 22, moveId: "alloy_break" },
     ],
   },
   {
@@ -82,6 +90,8 @@ const SPECIES = [
       { level: 6, moveId: "smoke_veil" },
       { level: 10, moveId: "flame_rush" },
       { level: 17, moveId: "steady_focus" },
+      { level: 20, moveId: "mind_lance" },
+      { level: 22, moveId: "psi_wave" },
     ],
   },
   {
@@ -94,6 +104,8 @@ const SPECIES = [
       { level: 1, moveId: "spark_splash" },
       { level: 8, moveId: "mist_shell" },
       { level: 12, moveId: "tidal_ram" },
+      { level: 18, moveId: "frost_shard" },
+      { level: 22, moveId: "undertow_lash" },
     ],
   },
   {
@@ -106,6 +118,8 @@ const SPECIES = [
       { level: 5, moveId: "mist_shell" },
       { level: 11, moveId: "tidal_ram" },
       { level: 16, moveId: "steady_focus" },
+      { level: 20, moveId: "arc_bolt" },
+      { level: 22, moveId: "static_lance" },
     ],
   },
   {
@@ -118,6 +132,8 @@ const SPECIES = [
       { level: 1, moveId: "quick_tap" },
       { level: 9, moveId: "tidal_ram" },
       { level: 14, moveId: "mist_shell" },
+      { level: 19, moveId: "venom_dart" },
+      { level: 22, moveId: "toxic_mist" },
     ],
   },
   {
@@ -130,6 +146,8 @@ const SPECIES = [
       { level: 7, moveId: "mist_shell" },
       { level: 13, moveId: "tidal_ram" },
       { level: 17, moveId: "steady_focus" },
+      { level: 20, moveId: "gale_slice" },
+      { level: 22, moveId: "sky_dart" },
     ],
   },
   {
@@ -142,6 +160,8 @@ const SPECIES = [
       { level: 3, moveId: "spark_splash" },
       { level: 10, moveId: "tidal_ram" },
       { level: 15, moveId: "mist_shell" },
+      { level: 19, moveId: "basalt_crash" },
+      { level: 22, moveId: "stone_lance" },
     ],
   },
   {
@@ -154,6 +174,8 @@ const SPECIES = [
       { level: 1, moveId: "quick_tap" },
       { level: 8, moveId: "bark_guard" },
       { level: 12, moveId: "spore_burst" },
+      { level: 18, moveId: "bramble_crush" },
+      { level: 22, moveId: "canopy_spike" },
     ],
   },
   {
@@ -166,6 +188,8 @@ const SPECIES = [
       { level: 5, moveId: "bark_guard" },
       { level: 10, moveId: "spore_burst" },
       { level: 14, moveId: "steady_focus" },
+      { level: 19, moveId: "quake_stomp" },
+      { level: 22, moveId: "terrashock" },
     ],
   },
   {
@@ -178,6 +202,8 @@ const SPECIES = [
       { level: 1, moveId: "vine_snap" },
       { level: 9, moveId: "bark_guard" },
       { level: 15, moveId: "steady_focus" },
+      { level: 20, moveId: "chitin_barrage" },
+      { level: 22, moveId: "swarm_nip" },
     ],
   },
   {
@@ -190,6 +216,8 @@ const SPECIES = [
       { level: 4, moveId: "bark_guard" },
       { level: 11, moveId: "spore_burst" },
       { level: 16, moveId: "quick_tap" },
+      { level: 20, moveId: "specter_orb" },
+      { level: 22, moveId: "wraith_bite" },
     ],
   },
   {
@@ -202,6 +230,8 @@ const SPECIES = [
       { level: 1, moveId: "bark_guard" },
       { level: 10, moveId: "spore_burst" },
       { level: 14, moveId: "steady_focus" },
+      { level: 19, moveId: "prism_dust" },
+      { level: 22, moveId: "starlight_pulse" },
     ],
   },
 ] as const satisfies readonly CreatureSpecies[];

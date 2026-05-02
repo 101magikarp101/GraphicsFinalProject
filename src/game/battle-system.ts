@@ -24,12 +24,15 @@ import type { PlayerSystem } from "./player-system";
 import type { BattleStatePacket, ServerPacket, StarterStatePacket } from "./protocol";
 
 const STARTER_LEVEL = 5;
+const STARTER_HP_MULTIPLIER = 4;
 const STARTER_STORE_PREFIX = "starter:";
-const TURN_RESOLUTION_MS = 2_400;
-const ACTION_GAP_MS = 900;
-const PROJECTILE_IMPACT_MS = 360;
-const MELEE_IMPACT_MS = 220;
-const STATUS_IMPACT_MS = 260;
+const TURN_RESOLUTION_MS = 1_350;
+const ACTION_GAP_MS = 520;
+const PROJECTILE_IMPACT_MS = 260;
+const MELEE_IMPACT_MS = 180;
+const STATUS_IMPACT_MS = 200;
+const STARTER_BATTLE_DISTANCE_FROM_PLAYER = 5.9;
+const DEMO_EMBERLYNX_MOVES: readonly MoveId[] = ["ember_jolt", "flame_rush", "magma_lance", "dragon_breath"];
 
 interface StarterRecord {
   speciesId: CreatureSpeciesId;
@@ -73,6 +76,7 @@ interface BattleSession {
   wild: BattleCreature;
   canSelectMove: boolean;
   pendingStarterMove?: MoveId;
+  queuedStarterMove?: MoveId;
   resolveReadyAtMs?: number;
   pendingOutcome?: "continue" | "victory" | "defeat";
   pendingXpReward?: number;
@@ -104,6 +108,8 @@ export class BattleSystem implements GameSystem {
       const playerId = row.key.slice(STARTER_STORE_PREFIX.length);
       const parsed = parseStarterRecord(row.value);
       if (!parsed) continue;
+      enforceDemoStarterMoveSet(parsed);
+      rebalanceStarterHp(parsed, false);
       this.starters.set(playerId, parsed);
     }
   }
@@ -239,11 +245,16 @@ export class BattleSystem implements GameSystem {
       speciesId,
       level: starter.stats.level,
       experience: starter.stats.experience,
-      hp: starter.stats.hp,
+      hp: starter.stats.maxHp,
       maxHp: starter.stats.maxHp,
       knownMoves: [...starter.knownMoves],
       status: starter.status,
     });
+    const starterRecord = this.starters.get(playerId);
+    if (starterRecord) {
+      enforceDemoStarterMoveSet(starterRecord);
+      rebalanceStarterHp(starterRecord, true);
+    }
     this.dirtyStarterPlayerIds.add(playerId);
     this.pendingBattleSync.add(playerId);
     return true;
@@ -283,15 +294,41 @@ export class BattleSystem implements GameSystem {
 
   chooseBattleMove(playerId: string, moveIdRaw: string): boolean {
     const battle = this.activeBattles.get(playerId);
-    if (!battle?.canSelectMove) return false;
+    if (!battle) return false;
     if (!isMoveId(moveIdRaw)) return false;
     const moveId = moveIdRaw as MoveId;
     if (!battle.starter.knownMoves.includes(moveId)) return false;
+
+    if (!battle.canSelectMove) {
+      battle.queuedStarterMove = moveId;
+      return true;
+    }
 
     battle.pendingStarterMove = moveId;
     battle.canSelectMove = false;
     battle.phase = "resolving";
     battle.revision += 1;
+    this.pendingBattleSync.add(playerId);
+    return true;
+  }
+
+  healStarter(playerId: string): boolean {
+    const starter = this.starters.get(playerId);
+    if (!starter) return false;
+
+    starter.hp = starter.maxHp;
+    starter.status = "none";
+
+    const battle = this.activeBattles.get(playerId);
+    if (battle) {
+      battle.starter.hp = battle.starter.maxHp;
+      battle.starter.status = "none";
+      battle.log.push(`${speciesName(starter.speciesId)} was fully healed.`);
+      battle.revision += 1;
+      this.pendingBattleSync.add(playerId);
+    }
+
+    this.dirtyStarterPlayerIds.add(playerId);
     this.pendingBattleSync.add(playerId);
     return true;
   }
@@ -325,6 +362,14 @@ export class BattleSystem implements GameSystem {
       battle.pendingOutcome = undefined;
       battle.pendingXpReward = undefined;
       battle.revision += 1;
+
+      const queuedMove = battle.queuedStarterMove;
+      if (queuedMove && battle.starter.hp > 0 && battle.wild.hp > 0) {
+        battle.pendingStarterMove = queuedMove;
+        battle.queuedStarterMove = undefined;
+        battle.canSelectMove = false;
+        battle.phase = "resolving";
+      }
     }
 
     this.dirtyStarterPlayerIds.add(playerId);
@@ -355,6 +400,8 @@ function applyCreatureStateToStarterRecord(starter: StarterRecord, state: Creatu
   starter.hp = Math.max(1, Math.min(starter.maxHp, state.stats.hp));
   starter.knownMoves = [...state.knownMoves];
   starter.status = state.status;
+  enforceDemoStarterMoveSet(starter);
+  rebalanceStarterHp(starter, false);
 }
 
 function starterRecordToBattleCreature(
@@ -465,10 +512,11 @@ function parseStarterRecord(raw: string): StarterRecord | undefined {
     if (!parsed || typeof parsed !== "object") return undefined;
     if (!parsed.speciesId || !isCreatureSpeciesId(parsed.speciesId)) return undefined;
     const level = clampInt(parsed.level, 1, 100, STARTER_LEVEL);
-    const maxHp = clampInt(parsed.maxHp, 1, 999, deriveStats(parsed.speciesId, level).maxHp);
+    const baseMaxHp = deriveStats(parsed.speciesId, level).maxHp;
+    const maxHp = clampInt(parsed.maxHp, 1, 999, baseMaxHp);
     const hp = clampInt(parsed.hp, 1, maxHp, maxHp);
     const experience = Math.max(0, Math.trunc(parsed.experience ?? 0));
-    return {
+    const starter: StarterRecord = {
       speciesId: parsed.speciesId,
       level,
       experience,
@@ -479,9 +527,28 @@ function parseStarterRecord(raw: string): StarterRecord | undefined {
         : [],
       status: normalizeStatus(parsed.status),
     };
+    rebalanceStarterHp(starter, false);
+    return starter;
   } catch {
     return undefined;
   }
+}
+
+function boostedStarterMaxHp(speciesId: CreatureSpeciesId, level: number): number {
+  const base = deriveStats(speciesId, level).maxHp;
+  return clampInt(Math.round(base * STARTER_HP_MULTIPLIER), 1, 999, base);
+}
+
+function rebalanceStarterHp(starter: StarterRecord, healToFull: boolean): void {
+  const previousMaxHp = Math.max(1, starter.maxHp);
+  const hpRatio = Math.max(0, Math.min(1, starter.hp / previousMaxHp));
+  starter.maxHp = boostedStarterMaxHp(starter.speciesId, starter.level);
+  starter.hp = healToFull ? starter.maxHp : Math.max(1, Math.min(starter.maxHp, Math.round(starter.maxHp * hpRatio)));
+}
+
+function enforceDemoStarterMoveSet(starter: StarterRecord): void {
+  if (starter.speciesId !== "emberlynx") return;
+  starter.knownMoves = [...DEMO_EMBERLYNX_MOVES];
 }
 
 function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
@@ -645,8 +712,8 @@ function starterPoseFor(
   const dx = wildPose.x - playerPosition.x;
   const dz = wildPose.z - playerPosition.z;
   const len = Math.max(0.001, Math.hypot(dx, dz));
-  const x = playerPosition.x + (dx / len) * 1.6;
-  const z = playerPosition.z + (dz / len) * 1.6;
+  const x = playerPosition.x + (dx / len) * STARTER_BATTLE_DISTANCE_FROM_PLAYER;
+  const z = playerPosition.z + (dz / len) * STARTER_BATTLE_DISTANCE_FROM_PLAYER;
   return {
     x,
     y: playerPosition.y,

@@ -9,6 +9,7 @@ const MAX_ANIMATED_WALK_SPEED = PLAYER_SPEED * 1.35;
 export interface PlayerRenderState extends PlayerPublicState {
   walkSpeed: number;
   phaseOffset: number;
+  commandPose: number;
 }
 
 export function interpolatePlayerRenderState(
@@ -29,6 +30,7 @@ export function interpolatePlayerRenderState(
     pitch: lerp(prev.pitch, curr.pitch, t),
     walkSpeed,
     phaseOffset: hashToPhase(curr.id),
+    commandPose: 0,
   };
 }
 
@@ -37,6 +39,7 @@ export function packPlayerRenderStates(players: PlayerRenderState[], buffers: Gp
   const positions = ensureBuffer(buffers, "aOffset", count * 4);
   const pitches = ensureBuffer(buffers, "aPitch", count);
   const motion = ensureBuffer(buffers, "aMotion", count * 2);
+  const commandPose = ensureBuffer(buffers, "aCommandPose", count);
   const shirtColors = ensureBuffer(buffers, "aShirtColor", count * 3);
   for (let i = 0; i < count; i++) {
     const p = players[i];
@@ -50,6 +53,7 @@ export function packPlayerRenderStates(players: PlayerRenderState[], buffers: Gp
     pitches[i] = p.pitch;
     motion[i * 2] = p.walkSpeed;
     motion[i * 2 + 1] = p.phaseOffset;
+    commandPose[i] = p.commandPose;
     shirtColors[i * 3] = shirtR;
     shirtColors[i * 3 + 1] = shirtG;
     shirtColors[i * 3 + 2] = shirtB;

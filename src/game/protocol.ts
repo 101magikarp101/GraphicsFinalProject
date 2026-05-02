@@ -168,6 +168,8 @@ export interface RoomSessionApi {
   startBattle(creatureId: string): void;
   /** Submits the selected move for the current battle turn. */
   chooseBattleMove(moveId: string): void;
+  /** Fully heals the player's starter creature. */
+  healStarter(): void;
   /** Leaves the room and disposes the session. */
   leave(): void;
 }

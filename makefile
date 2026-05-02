@@ -5,11 +5,12 @@ vincent:
 	bun dev
 
 reset-db:
-	git clean -f drizzle/meta/*.json
-	if exist *.sqlite del /Q *.sqlite
-	echo Database reset. Re-run migrations to initialize schema.
+	@echo Resetting local database state...
+	@powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process wrangler,workerd,miniflare -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 200; Get-ChildItem -Path . -Filter '*.sqlite*' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue; if (Test-Path '.wrangler/state') { Remove-Item '.wrangler/state' -Recurse -Force -ErrorAction SilentlyContinue }; if (Test-Path '.wrangler/deploy/config.json') { Remove-Item '.wrangler/deploy/config.json' -Force -ErrorAction SilentlyContinue }"
+	@git clean -f drizzle/meta/*.json
+	@echo Database reset complete. Local DO/SQLite state is fresh.
 
-fresh-start: vincent reset-db
+fresh-start: reset-db vincent
 
 MSG := $(strip $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)))
 FOLDER := $(MSG)

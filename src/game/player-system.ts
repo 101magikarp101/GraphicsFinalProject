@@ -47,6 +47,7 @@ interface SpawnChunkProvider {
 
 const SPAWN_X = 0;
 const SPAWN_Z = 20;
+const SPAWN_SEARCH_RADIUS = 40;
 const spawnPositionCache = new Map<number, { x: number; y: number; z: number; yaw: number; pitch: number }>();
 
 function getSpawnPosition(seed: number, chunkStorage?: SpawnChunkProvider) {
@@ -71,6 +72,63 @@ function getSpawnPosition(seed: number, chunkStorage?: SpawnChunkProvider) {
       localZ: wz - (originZ - CHUNK_SIZE / 2),
     };
   };
+
+  const getBlockAt = (wx: number, wy: number, wz: number): CubeType => {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return CubeType.Air;
+    const { chunk, localX, localZ } = getChunkForWorld(wx, wz);
+    return chunk.getBlock(localX, wy, localZ);
+  };
+
+  const isSpawnGround = (block: CubeType): boolean => {
+    switch (block) {
+      case CubeType.Grass:
+      case CubeType.Dirt:
+      case CubeType.Stone:
+      case CubeType.Sand:
+      case CubeType.Snow:
+      case CubeType.ForestGrass:
+      case CubeType.Permafrost:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const findSurfaceAt = (wx: number, wz: number): number | undefined => {
+    for (let y = CHUNK_HEIGHT - 3; y >= 1; y--) {
+      if (!isSpawnGround(getBlockAt(wx, y, wz))) continue;
+      if (getBlockAt(wx, y + 1, wz) !== CubeType.Air) continue;
+      if (getBlockAt(wx, y + 2, wz) !== CubeType.Air) continue;
+
+      let openSky = true;
+      for (let skyY = y + 3; skyY < CHUNK_HEIGHT; skyY++) {
+        if (getBlockAt(wx, skyY, wz) !== CubeType.Air) {
+          openSky = false;
+          break;
+        }
+      }
+      if (!openSky) continue;
+
+      return y;
+    }
+    return undefined;
+  };
+
+  // Spiral search around the nominal world spawn to guarantee an outdoor spawn.
+  for (let radius = 0; radius <= SPAWN_SEARCH_RADIUS; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+        const wx = SPAWN_X + dx;
+        const wz = SPAWN_Z + dz;
+        const surfaceY = findSurfaceAt(wx, wz);
+        if (surfaceY == null) continue;
+        const computed = { x: wx, y: surfaceY + 1, z: wz, yaw: 0, pitch: 0 };
+        spawnPositionCache.set(seed, computed);
+        return { ...computed };
+      }
+    }
+  }
 
   const { chunk, localX, localZ } = getChunkForWorld(SPAWN_X, SPAWN_Z);
   let topY = -1;

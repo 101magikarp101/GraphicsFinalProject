@@ -25,6 +25,7 @@ export class BlockSystem implements GameSystem {
 
   private readonly storage: ChunkStorage;
   private readonly playerSystem: PlayerSystem;
+  private creatureBlockIntersectionChecker?: (x: number, y: number, z: number) => boolean;
   private pendingAcks = new Map<string, Array<{ seq: number; accepted: boolean }>>();
   private pendingChanges: Array<{ x: number; y: number; z: number; blockType: number }> = [];
   private pendingChunkData = new Map<string, ChunkBlob[]>();
@@ -44,6 +45,10 @@ export class BlockSystem implements GameSystem {
     this.playerSystem = playerSystem;
     this.initialLoadRadius = opts?.initialLoadRadius ?? 9;
     this.loadRadius = opts?.loadRadius ?? 8;
+  }
+
+  setCreatureBlockIntersectionChecker(checker: (x: number, y: number, z: number) => boolean): void {
+    this.creatureBlockIntersectionChecker = checker;
   }
 
   hydrate(_db: DrizzleSqliteDODatabase<typeof schema>): void {}
@@ -72,6 +77,10 @@ export class BlockSystem implements GameSystem {
       return;
     }
     if (action.action === "place" && blockIntersectsPlayer(action.x, action.y, action.z, pos)) {
+      this.pushAck(playerId, action.seq, false);
+      return;
+    }
+    if (action.action === "place" && this.creatureBlockIntersectionChecker?.(action.x, action.y, action.z)) {
       this.pushAck(playerId, action.seq, false);
       return;
     }

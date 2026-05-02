@@ -7,6 +7,17 @@ const PART_RIGHT_FRONT_LEG = 3;
 const PART_LEFT_BACK_LEG = 4;
 const PART_RIGHT_BACK_LEG = 5;
 const PART_TAIL = 6;
+const PART_NECK = 7;
+const PART_TAIL_TIP = 8;
+const PART_LEFT_WING = 9;
+const PART_RIGHT_WING = 10;
+const PART_HORN = 11;
+const PART_LEFT_EYE = 12;
+const PART_RIGHT_EYE = 13;
+const PART_MOUTH = 14;
+const PART_DORSAL_FIN = 15;
+const PART_CREST = 16;
+const PART_SPIKE_ROW = 17;
 
 interface BoxDef {
   part: number;
@@ -66,12 +77,100 @@ export function createCreatureModelGeometry(): EntityPassDef["geometry"] {
       max: [headSize / 2, legHeight + bodyHeight * 0.72 + headSize, bodyLength / 2 + headSize],
     },
     {
+      part: PART_LEFT_EYE,
+      paletteMix: 0.0,
+      color: [0.06, 0.06, 0.08],
+      pivot: [-headSize * 0.22, legHeight + bodyHeight * 0.9, bodyLength / 2 + headSize * 0.93],
+      min: [-headSize * 0.33, legHeight + bodyHeight * 0.865, bodyLength / 2 + headSize * 0.9],
+      max: [-headSize * 0.11, legHeight + bodyHeight * 0.965, bodyLength / 2 + headSize * 1.06],
+    },
+    {
+      part: PART_RIGHT_EYE,
+      paletteMix: 0.0,
+      color: [0.06, 0.06, 0.08],
+      pivot: [headSize * 0.22, legHeight + bodyHeight * 0.9, bodyLength / 2 + headSize * 0.93],
+      min: [headSize * 0.11, legHeight + bodyHeight * 0.865, bodyLength / 2 + headSize * 0.9],
+      max: [headSize * 0.33, legHeight + bodyHeight * 0.965, bodyLength / 2 + headSize * 1.06],
+    },
+    {
+      part: PART_MOUTH,
+      paletteMix: 0.0,
+      color: [0.18, 0.08, 0.08],
+      pivot: [0, legHeight + bodyHeight * 0.79, bodyLength / 2 + headSize * 0.99],
+      min: [-headSize * 0.2, legHeight + bodyHeight * 0.735, bodyLength / 2 + headSize * 0.93],
+      max: [headSize * 0.2, legHeight + bodyHeight * 0.835, bodyLength / 2 + headSize * 1.11],
+    },
+    {
+      part: PART_NECK,
+      paletteMix: 0.22,
+      color: [0.92, 0.92, 0.92],
+      pivot: [0, legHeight + bodyHeight * 0.82, bodyLength * 0.42],
+      min: [-0.1, legHeight + bodyHeight * 0.7, bodyLength * 0.33],
+      max: [0.1, legHeight + bodyHeight * 0.95, bodyLength * 0.58],
+    },
+    {
       part: PART_TAIL,
       paletteMix: 0.65,
       color: [0.95, 0.95, 0.95],
       pivot: [0, legHeight + bodyHeight * 0.8, -bodyLength / 2],
       min: [-0.08, legHeight + bodyHeight * 0.78, -bodyLength / 2 - tailLength],
       max: [0.08, legHeight + bodyHeight * 0.88, -bodyLength / 2],
+    },
+    {
+      part: PART_TAIL_TIP,
+      paletteMix: 0.78,
+      color: [0.98, 0.98, 0.98],
+      pivot: [0, legHeight + bodyHeight * 0.82, -bodyLength / 2 - tailLength],
+      min: [-0.06, legHeight + bodyHeight * 0.8, -bodyLength / 2 - tailLength - 0.2],
+      max: [0.06, legHeight + bodyHeight * 0.9, -bodyLength / 2 - tailLength],
+    },
+    {
+      part: PART_LEFT_WING,
+      paletteMix: 0.48,
+      color: [0.9, 0.9, 0.9],
+      pivot: [-bodyWidth * 0.5, legHeight + bodyHeight * 0.95, -0.03],
+      min: [-bodyWidth - 0.28, legHeight + bodyHeight * 0.9, -0.1],
+      max: [-bodyWidth * 0.5, legHeight + bodyHeight * 1.02, 0.18],
+    },
+    {
+      part: PART_RIGHT_WING,
+      paletteMix: 0.48,
+      color: [0.9, 0.9, 0.9],
+      pivot: [bodyWidth * 0.5, legHeight + bodyHeight * 0.95, -0.03],
+      min: [bodyWidth * 0.5, legHeight + bodyHeight * 0.9, -0.1],
+      max: [bodyWidth + 0.28, legHeight + bodyHeight * 1.02, 0.18],
+    },
+    {
+      part: PART_HORN,
+      paletteMix: 0.7,
+      color: [0.96, 0.96, 0.96],
+      pivot: [0, legHeight + bodyHeight * 1.08, bodyLength / 2 + headSize * 0.2],
+      min: [-0.05, legHeight + bodyHeight * 1.0, bodyLength / 2 + headSize * 0.1],
+      max: [0.05, legHeight + bodyHeight * 1.2, bodyLength / 2 + headSize * 0.35],
+    },
+    {
+      part: PART_DORSAL_FIN,
+      paletteMix: 0.62,
+      color: [0.95, 0.95, 0.95],
+      pivot: [0, legHeight + bodyHeight * 1.0, -0.02],
+      min: [-0.04, legHeight + bodyHeight * 0.96, -bodyLength * 0.18],
+      max: [0.04, legHeight + bodyHeight * 1.26, bodyLength * 0.24],
+    },
+    {
+      part: PART_CREST,
+      paletteMix: 0.57,
+      color: [0.92, 0.92, 0.92],
+      pivot: [0, legHeight + bodyHeight * 1.0, bodyLength / 2 + headSize * 0.08],
+      min: [-0.035, legHeight + bodyHeight * 1.0, bodyLength / 2 - headSize * 0.05],
+      max: [0.035, legHeight + bodyHeight * 1.24, bodyLength / 2 + headSize * 0.26],
+    },
+    {
+      part: PART_SPIKE_ROW,
+      paletteMix: 0.8,
+      color: [0.96, 0.96, 0.96],
+      pivot: [0, legHeight + bodyHeight * 1.02, -bodyLength * 0.06],
+      min: [-0.03, legHeight + bodyHeight * 0.98, -bodyLength * 0.34],
+      max: [0.03, legHeight + bodyHeight * 1.2, bodyLength * 0.12],
     },
     {
       part: PART_LEFT_FRONT_LEG,

@@ -133,6 +133,7 @@ export class GameRoom extends DurableObject<Env> {
 
     this.blockSystem = new BlockSystem(this.chunkStorage, this.playerSystem, this.blockSystemOptions);
     this.creatureSystem = new CreatureSystem(this.chunkStorage, this.playerSystem);
+    this.blockSystem.setCreatureBlockIntersectionChecker((x, y, z) => this.creatureSystem.intersectsBlock(x, y, z));
     this.battleSystem = new BattleSystem(this.playerSystem, this.creatureSystem);
     const fluidSystem = new FluidSystem(this.chunkStorage);
     this.systems = [this.playerSystem, this.blockSystem, this.creatureSystem, this.battleSystem, fluidSystem];
@@ -293,6 +294,14 @@ export class GameRoom extends DurableObject<Env> {
     this.ensureInitialized();
     this.ensureJoined(playerId);
     if (this.battleSystem.chooseBattleMove(playerId, moveId)) {
+      this.needsBroadcast = true;
+    }
+  }
+
+  healStarter(playerId: string) {
+    this.ensureInitialized();
+    this.ensureJoined(playerId);
+    if (this.battleSystem.healStarter(playerId)) {
       this.needsBroadcast = true;
     }
   }
@@ -639,6 +648,11 @@ export class RoomSession extends RpcTarget implements RoomSessionApi {
   /** Selects the player's move for the active battle turn. */
   chooseBattleMove(moveId: string) {
     return this.#call(() => this.#getRoom().chooseBattleMove(this.#playerId, moveId));
+  }
+
+  /** Fully heals the player's starter creature. */
+  healStarter() {
+    return this.#call(() => this.#getRoom().healStarter(this.#playerId));
   }
 
   /** Leaves the room (idempotent; subsequent calls are no-ops). */

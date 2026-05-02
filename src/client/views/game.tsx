@@ -1,5 +1,5 @@
 import { createEventListener } from "@solid-primitives/event-listener";
-import { createEffect, createSignal, on, Show } from "solid-js";
+import { createEffect, createSignal, For, on, Show } from "solid-js";
 import type { CreatureSpeciesId } from "@/game/creature-species";
 import { HOTBAR_SLOT_COUNT } from "@/game/player";
 import { BattleHud } from "../components/BattleHud";
@@ -16,6 +16,7 @@ import { parseBenchmarkConfig } from "../primitives";
 import { createGameplayPreferences } from "../primitives/gameplay-preferences";
 import { createGameplayUiState } from "../primitives/gameplay-ui-state";
 import { joinWorld } from "../primitives/join-world";
+import { exportCreatureModelSnapshotCsv } from "../primitives/model-snapshot";
 import { setWorldReady } from "../state/loading";
 
 export default function GameView() {
@@ -34,8 +35,10 @@ export default function GameView() {
     setRenderDistance,
     setShowDiagnostics,
     setShowMobHighlight,
+    setShowModelDebugOverlay,
     setShadowTechnique,
     setShadowStrength,
+    setBattleHudScale,
   } = createGameplayPreferences();
   const ui = createGameplayUiState();
   const benchmarkConfig =
@@ -109,6 +112,17 @@ export default function GameView() {
     ui.togglePauseMenu();
   });
 
+  createEventListener(window, "keydown", (event) => {
+    if (event.repeat) return;
+    if (event.key.toLowerCase() !== "k") return;
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      return;
+    }
+    event.preventDefault();
+    room.session()?.healStarter();
+  });
+
   const respawn = () => {
     room.session()?.respawn();
   };
@@ -176,12 +190,32 @@ export default function GameView() {
           onRenderDistanceInput={setRenderDistance}
           onShowDiagnosticsInput={setShowDiagnostics}
           onShowMobHighlightInput={setShowMobHighlight}
+          onShowModelDebugOverlayInput={setShowModelDebugOverlay}
+          onBattleHudScaleInput={setBattleHudScale}
+          onExportModelSnapshot={exportCreatureModelSnapshotCsv}
         />
       </Show>
       <Show when={ui.deathScreenOpen()}>
         <DeathScreen onRespawn={respawn} />
       </Show>
       <Show when={!hudHidden()}>
+        <div class="pointer-events-none absolute inset-0 z-20" aria-hidden="true">
+          <For each={game.creatureNametags}>
+            {(tag) => (
+              <div
+                class="absolute -translate-x-1/2 -translate-y-full rounded border border-black/75 bg-[rgba(20,24,34,0.72)] px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_2px_0_rgba(0,0,0,0.7)]"
+                style={{
+                  left: `${tag.leftPx}px`,
+                  top: `${tag.topPx}px`,
+                  transform: `translate(-50%, -100%) scale(${tag.scale})`,
+                  opacity: tag.alpha.toFixed(3),
+                }}
+              >
+                {tag.label}
+              </div>
+            )}
+          </For>
+        </div>
         <Minimap
           hidden={interactionBlocked()}
           minimap={game.minimap}
@@ -210,12 +244,14 @@ export default function GameView() {
         onClickSlot={(target) => room.session()?.clickInventory(target)}
       />
       <Show when={room.battleState()}>
-        {(battle) => <BattleHud battle={battle()} onSelectMove={chooseBattleMove} />}
+        {(battle) => (
+          <BattleHud battle={battle()} hudScale={preferences.battleHudScale} onSelectMove={chooseBattleMove} />
+        )}
       </Show>
       <Show when={needsStarterChoice()}>
         <StarterSelectionOverlay onSelectStarter={chooseStarter} disabled={!room.session()} />
       </Show>
-      <Show when={(debugVisible() || preferences.showDiagnostics) && room.player()?.state}>
+      <Show when={(debugVisible() || preferences.showDiagnostics || preferences.showModelDebugOverlay) && room.player()?.state}>
         {(playerState) => (
           <DiagnosticsPanel
             playerState={playerState()}

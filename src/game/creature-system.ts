@@ -25,11 +25,14 @@ const WILD_PATHFIND_RADIUS = 18;
 const WILD_COMFORT_RADIUS = 5;
 const CREATURE_MAX_STEP_UP = 1.25;
 const CREATURE_MAX_DROP = 2.5;
+const CREATURE_COLLISION_RADIUS = 0.92;
+const CREATURE_COLLISION_HEIGHT = 1.9;
 const PLAYER_SPAWN_COOLDOWN_MS = 300;
 const PLAYER_LOCAL_SPAWN_ATTEMPTS = 16;
 const LOCAL_SPAWN_MIN_RADIUS = 4;
 const LOCAL_SPAWN_MAX_RADIUS = 12;
 const LOCAL_SPAWN_MIN_SEPARATION = 10;
+const INITIAL_PLAYER_SPAWN_BURST = 3;
 const GOLDEN_ANGLE_RADIANS = 2.399963229728653;
 
 interface CreatureInstance {
@@ -66,6 +69,7 @@ export class CreatureSystem implements GameSystem {
   private onlinePlayerIds = new Set<string>();
   private viewByPlayer = new Map<string, Set<string>>();
   private playerSpawnCooldownUntil = new Map<string, number>();
+  private initialSpawnBursts = new Map<string, number>();
   private nextWildMoveAt = new Map<string, number>();
   private nextWildSerial = 1;
 
@@ -112,9 +116,18 @@ export class CreatureSystem implements GameSystem {
   }
 
   setOnlinePlayers(ids: Iterable<string>): void {
-    this.onlinePlayerIds = new Set(ids);
+    const nextOnline = new Set(ids);
+    for (const playerId of nextOnline) {
+      if (!this.onlinePlayerIds.has(playerId)) {
+        this.initialSpawnBursts.set(playerId, INITIAL_PLAYER_SPAWN_BURST);
+      }
+    }
+    this.onlinePlayerIds = nextOnline;
     for (const id of [...this.viewByPlayer.keys()]) {
       if (!this.onlinePlayerIds.has(id)) this.viewByPlayer.delete(id);
+    }
+    for (const id of [...this.initialSpawnBursts.keys()]) {
+      if (!this.onlinePlayerIds.has(id)) this.initialSpawnBursts.delete(id);
     }
   }
 
@@ -123,6 +136,7 @@ export class CreatureSystem implements GameSystem {
     let changed = false;
 
     changed = this.despawnFarCreatures() || changed;
+    changed = this.spawnInitialBurstNearPlayers(now) || changed;
     changed = this.spawnNearPlayers(now) || changed;
     changed = this.spawnFromLoadedChunks(now) || changed;
     changed = this.wanderWildCreatures() || changed;
@@ -237,6 +251,14 @@ export class CreatureSystem implements GameSystem {
       z: creature.z,
       yaw: creature.yaw,
     };
+  }
+
+  intersectsBlock(blockX: number, blockY: number, blockZ: number): boolean {
+    for (const creature of this.creatures.values()) {
+      if (creature.removed || creature.state.stats.hp <= 0) continue;
+      if (creatureOverlapsBlock(creature, blockX, blockY, blockZ)) return true;
+    }
+    return false;
   }
 
   private spawnFromLoadedChunks(nowMs: number): boolean {
@@ -361,6 +383,65 @@ export class CreatureSystem implements GameSystem {
     return changed;
   }
 
+  private spawnInitialBurstNearPlayers(nowMs: number): boolean {
+    if (this.onlinePlayerIds.size === 0) return false;
+    if (this.countWild() >= GLOBAL_WILD_CAP) return false;
+
+    let changed = false;
+    const chunkCounts = countByChunk(this.creatures);
+
+    for (const playerId of this.onlinePlayerIds) {
+      let remaining = this.initialSpawnBursts.get(playerId) ?? 0;
+      if (remaining <= 0) continue;
+
+      const pos = this.playerSystem.getPlayerPosition(playerId);
+      if (!pos) continue;
+
+      while (remaining > 0 && this.countWild() < GLOBAL_WILD_CAP) {
+        const nearbyWild = countWildWithinRadius(pos.x, pos.z, this.creatures, PER_PLAYER_RADIUS);
+        if (nearbyWild >= PER_PLAYER_CAP) break;
+
+        const spawn = this.pickLocalSurfaceSpawn(pos.x, pos.z, nowMs + remaining * 101);
+        if (!spawn) break;
+
+        const chunkKey = chunkKeyFromPosition(spawn.x, spawn.z);
+        const inChunk = chunkCounts.get(chunkKey) ?? 0;
+        if (inChunk >= PER_CHUNK_CAP) break;
+
+        const species = pickSpeciesForSpawn(spawn.x, spawn.z);
+        const level = 3 + ((Math.abs(Math.floor(spawn.x) + Math.floor(spawn.z)) % 7) + 1);
+        const id = `wild_local_${chunkKey}_${this.nextWildSerial++}`;
+        const state = createCreatureState({
+          id,
+          speciesId: species,
+          level,
+          isWild: true,
+          ownerPlayerId: null,
+        });
+        const instance: CreatureInstance = {
+          state,
+          x: spawn.x,
+          y: spawn.y,
+          z: spawn.z,
+          yaw: spawn.yaw,
+          chunkKey,
+          spawnPointKey: `local:${Math.floor(spawn.x)},${Math.floor(spawn.z)}`,
+          removed: false,
+        };
+        this.creatures.set(id, instance);
+        this.nextWildMoveAt.set(id, nowMs + wildMoveDelayMs(id, nowMs));
+        this.dirtyIds.add(id);
+        chunkCounts.set(chunkKey, inChunk + 1);
+        changed = true;
+        remaining -= 1;
+      }
+
+      this.initialSpawnBursts.set(playerId, remaining);
+    }
+
+    return changed;
+  }
+
   private pickLocalSurfaceSpawn(
     playerX: number,
     playerZ: number,
@@ -420,6 +501,15 @@ export class CreatureSystem implements GameSystem {
         creature.z = currentSurface.z;
         this.dirtyIds.add(creature.state.id);
         changed = true;
+      } else if (!currentSurface) {
+        const unstuck = this.findNearbyClearSurface(creature.x, creature.z, creature.y);
+        if (unstuck) {
+          creature.x = unstuck.x;
+          creature.y = unstuck.y;
+          creature.z = unstuck.z;
+          this.dirtyIds.add(creature.state.id);
+          changed = true;
+        }
       }
 
       const nextMoveAt = this.nextWildMoveAt.get(creature.state.id);
@@ -524,6 +614,33 @@ export class CreatureSystem implements GameSystem {
     return { x, y: surfaceY + 1, z };
   }
 
+  private findNearbyClearSurface(
+    x: number,
+    z: number,
+    fallbackY?: number,
+  ): { x: number; y: number; z: number } | undefined {
+    const offsets = [
+      [0, 0],
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+      [2, 0],
+      [-2, 0],
+      [0, 2],
+      [0, -2],
+    ] as const;
+    for (const [ox, oz] of offsets) {
+      const surface = this.resolveCreatureSurface(x + ox, z + oz, fallbackY);
+      if (surface) return surface;
+    }
+    return undefined;
+  }
+
   private despawnFarCreatures(): boolean {
     if (this.onlinePlayerIds.size === 0) return false;
     let changed = false;
@@ -618,6 +735,31 @@ function countWildWithinRadius(
     if (dx * dx + dz * dz <= r2) count++;
   }
   return count;
+}
+
+function creatureOverlapsBlock(creature: CreatureInstance, blockX: number, blockY: number, blockZ: number): boolean {
+  const minX = creature.x - CREATURE_COLLISION_RADIUS;
+  const maxX = creature.x + CREATURE_COLLISION_RADIUS;
+  const minY = creature.y;
+  const maxY = creature.y + CREATURE_COLLISION_HEIGHT;
+  const minZ = creature.z - CREATURE_COLLISION_RADIUS;
+  const maxZ = creature.z + CREATURE_COLLISION_RADIUS;
+
+  const blockMinX = blockX;
+  const blockMaxX = blockX + 1;
+  const blockMinY = blockY;
+  const blockMaxY = blockY + 1;
+  const blockMinZ = blockZ;
+  const blockMaxZ = blockZ + 1;
+
+  return !(
+    maxX <= blockMinX ||
+    minX >= blockMaxX ||
+    maxY <= blockMinY ||
+    minY >= blockMaxY ||
+    maxZ <= blockMinZ ||
+    minZ >= blockMaxZ
+  );
 }
 
 function pickSpeciesForSpawn(x: number, z: number): CreatureSpeciesId {

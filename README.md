@@ -41,6 +41,7 @@ bun lint:fix
 - `F3`: diagnostics
 - `H`: mob highlight toggle
 - `F1`: hide/show HUD
+- `F5`: cycle camera perspective (first person, third person back, third person front)
 
 The diagnostics panel includes:
 

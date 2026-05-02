@@ -125,6 +125,11 @@ export function joinWorld(roomId: string) {
         return;
       case "battleState":
         setBattleState(packet.battle);
+        if (packet.battle?.active) {
+          sounds.startBattleMusic();
+        } else {
+          sounds.stopBattleMusic();
+        }
         return;
     }
   }
@@ -141,6 +146,7 @@ export function joinWorld(roomId: string) {
   }
 
   onCleanup(() => {
+    sounds.dispose();
     session()?.leave();
   });
 

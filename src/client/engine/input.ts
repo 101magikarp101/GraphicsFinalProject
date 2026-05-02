@@ -16,6 +16,7 @@ export interface WalkKeys {
 
 export interface InputOptions {
   onReset?: () => void;
+  onCyclePerspective?: () => void;
   onToggleInventory?: () => void;
   onCloseInventory?: () => void;
   onToggleHud?: () => void;
@@ -45,6 +46,13 @@ export interface InputHandle {
  */
 export function createInput(canvas: Accessor<HTMLCanvasElement | undefined>, opts: InputOptions = {}): InputHandle {
   if (opts.onReset) createShortcut(["R"], opts.onReset);
+  if (opts.onCyclePerspective) {
+    createEventListener(window, "keydown", (e: KeyboardEvent) => {
+      if (e.code !== "F5") return;
+      e.preventDefault();
+      opts.onCyclePerspective?.();
+    });
+  }
   if (opts.onToggleInventory) createShortcut(["E"], opts.onToggleInventory);
   if (opts.onCloseInventory) createShortcut(["Escape"], opts.onCloseInventory);
   if (opts.onToggleHud) createShortcut(["F1"], opts.onToggleHud);
